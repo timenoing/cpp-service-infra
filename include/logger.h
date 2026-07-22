@@ -33,6 +33,7 @@ private:
     void Rotate();                                            // 日志文件回滚/归档
     std::ofstream log_file_;   // 主日志文件
     std::ofstream old_file_;   // 旧日志文件
+    std::mutex lock_mut;//锁状态
     bool switched_to_backup_ =false;//备份启用
     bool both_dead_warned_ = false;//两份全部不能用
 };

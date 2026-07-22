@@ -29,36 +29,49 @@ Logger& Logger::Instance()
       log_line="[" + time_set + "][" + level_str + "]["+ msg +"][" + operation + "]";
       return log_line;
      }
+
+
       void Logger::WriteToFile(const std::string& log_line)
      {
+      std::lock_guard<std::mutex> lock_(lock_mut);
+      
       if(log_file_.is_open())
       {
       pool_.submit([this,log_line]{log_file_<<log_line<<std::endl;});
       }
       else if(old_file_.is_open())
       {
-         if(bool both_dead_warned_ = false;)
+         if(!switched_to_backup_ )
       {
       std::cout << "主日志文件损坏，请检查！，现在启用备份日志" << std::endl;
-      both_dead_warned=true;
+         switched_to_backup_=true;
+   
       }
       pool_.submit([this,log_line]{old_file_<<log_line<<std::endl;});
         
         
       }
       else {
-         if(switched_to_backup_ ==true)
+         if(!both_dead_warned_)
          {
          std::cout << "主日志文件和备份日志均损坏，请检查！" << std::endl;
-         switched_to_backup_ =false;
+        
+         both_dead_warned_ =true;
+      
+         
          }
       }
+   
      }
+
+
     void Logger::Log(LogLevel level, const std::string& msg,const std::string& opreation)
      {
           std::string log_line=Format(level, msg, opreation);
           WriteToFile(log_line);
      }
+
+
     Logger::Logger()
     : pool_(1)
      {
