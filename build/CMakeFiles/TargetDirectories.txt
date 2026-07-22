@@ -1,3 +1,0 @@
-/home/god/cpp-service-infra/build/CMakeFiles/main.dir
-/home/god/cpp-service-infra/build/CMakeFiles/edit_cache.dir
-/home/god/cpp-service-infra/build/CMakeFiles/rebuild_cache.dir

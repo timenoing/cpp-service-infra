@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/main.dir/main.cpp.o CMakeFiles/main.dir/src/ThreadPool.h.cpp.o CMakeFiles/main.dir/src/logger.cpp.o -o ../bin/main 
