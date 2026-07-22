@@ -2,3 +2,7 @@ build/
 bin/
 logs/
 .vscode/
+build/
+bin/
+logs/
+.vscode/
