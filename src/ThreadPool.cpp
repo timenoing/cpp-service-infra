@@ -31,7 +31,6 @@ void ThreadPool::workerLoop()
 ThreadPool::~ThreadPool()
 {   {
     std::unique_lock<std::mutex> lock(mut);
-    cv.wait(lock,[this]{return tasks.empty();});
     stopping=true;
     }
      cv.notify_all();
