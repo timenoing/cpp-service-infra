@@ -17,6 +17,7 @@ Logger& Logger::Instance()
       std::string time_set=GetCurrentTime();
       std::string log_line;
       std::string level_str;
+      TraceID Tid=Trace::getCurrentID();
       switch(level)
       {
         case INFO:  level_str = "INFO";  break;
@@ -25,9 +26,18 @@ Logger& Logger::Instance()
         case FATAL: level_str = "FATAL"; break;
         default:    level_str = "UNKNOWN"; break;
       }
-      log_line.reserve(time_set.size() + level_str.size() +msg.size() +operation.size() );
-      log_line="[" + time_set + "][" + level_str + "]["+ msg +"][" + operation + "]";
+      if(Tid.isempty())
+      {
+      
+      log_line.reserve(time_set.size() + level_str.size() +msg.size() +operation.size()+32);
+      log_line="[no-trace][" + time_set + "][" + level_str + "]["+ msg +"][" + operation + "]";
       return log_line;
+      }
+      else {
+      log_line.reserve(Tid.toString().size()+time_set.size() + level_str.size() +msg.size() +operation.size()+32);
+      log_line=Tid.toString()+"[" + time_set + "][" + level_str + "]["+ msg +"][" + operation + "]";
+      return log_line;
+      }
      }
 
 
@@ -80,9 +90,4 @@ Logger& Logger::Instance()
       
      }
      Logger::~Logger()
-     {
-      if(log_file_.is_open())
-         log_file_.close();
-      if(old_file_.is_open())
-        old_file_.close();
-     }
+     {}

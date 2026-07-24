@@ -6,7 +6,10 @@ TraceID::TraceID()
  : timestamp_{0},counter_{0}
 {
 }
-
+bool  TraceID::isempty() const
+{
+    return timestamp_==0&&counter_==0;
+}
 bool  TraceID::operator<(const TraceID& other) const {
         if (timestamp_ != other.timestamp_)
             return timestamp_ < other.timestamp_;

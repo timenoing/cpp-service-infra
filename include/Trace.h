@@ -9,6 +9,7 @@ class TraceID
     public:
     TraceID();
     TraceID(std::uint64_t timestamp,std::uint64_t counter);
+    bool isempty() const;
     std::string toString() const;
     bool operator<(const TraceID& other) const;
 

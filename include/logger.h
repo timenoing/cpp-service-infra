@@ -9,6 +9,7 @@
 #include <fstream>
 #include<functional>
 #include"ThreadPool.h"
+#include"Trace.h"
     enum LogLevel {
     INFO,
     WARN,
@@ -24,7 +25,6 @@ public:
     void Log(LogLevel level, const std::string& msg,const std::string& opreation);
 
 private:
-    ThreadPool pool_;
     Logger();   // 构造函数，打开文件
     ~Logger();  // 析构函数，关闭文件
     std::string GetCurrentTime();                            // 获取当前时间字符串
@@ -36,6 +36,7 @@ private:
     std::mutex lock_mut;//锁状态
     bool switched_to_backup_ =false;//备份启用
     bool both_dead_warned_ = false;//两份全部不能用
+    ThreadPool pool_;
 };
 
 #endif
