@@ -1,8 +1,8 @@
-a
 #ifndef CURSOR_H
 #define CURSOR_H
 #include<sqlite3.h>
 #include<string>
+#include<iostream>
 #include<utility>
 class Cursor
 {

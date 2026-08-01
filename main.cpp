@@ -1,5 +1,6 @@
 #include "ConnectionPool.h"
 #include "ConnectionGuard.h"
+#include"Cursor.h"
 #include "Logger.h"
 #include <iostream>
 #include <thread>
@@ -40,8 +41,8 @@ int main()
         g->execute("INSERT INTO t(id,name) VALUES(1,'hello')");
 
         auto cur = g->query("SELECT name FROM t WHERE id=1");
-        CHECK(cur.next());
-        CHECK(cur.getString(0) == "hello");
+        CHECK(cur->next());
+        CHECK(cur->getString(0) == "hello");
     }   // g 析构归还 → pool 析构,无崩无泄漏
 
     // ---- Test 4: Guard 移动 ----
@@ -76,8 +77,8 @@ int main()
 
         auto g = pool.acquire().get();
         auto cur = g->query("SELECT COUNT(*) FROM t");
-        CHECK(cur.next());
-        CHECK(cur.getInt(0) == T * N);
+        CHECK(cur->next());
+        CHECK(cur->getInt(0) == T * N);
     }
 
     // ---- Test 3: 超 max 阻塞 5s 后返回空 Guard ----

@@ -78,13 +78,20 @@ bool ConnectionPool::expand()
   return false;
   total_conn_+=need;
   }
-  std::vector<Connection*> tem_;
-  for(size_t i=0;i<need;++i)
+  std::vector<Connection*> tem_; size_t num=need; size_t count=0;
+  for(size_t i=0;i<num;++i)
   {
-  tem_.push_back(new Connection(filename_));
+    Connection* conn=new Connection(filename_);
+  if(conn->isvalid())
+  {
+  tem_.push_back(conn);
+  ++count;
+  }
+  else {delete conn;++num; if(num>5) break;}
   }
   {
     std::unique_lock<std::mutex> lock(mutex_);
+    total_conn_=total_conn_-need+count;
     for(auto*conn:tem_)
     {
     idle_.push_back(conn);
@@ -95,7 +102,7 @@ return true;
 }
 std::future<ConnectionGuard> ConnectionPool::acquire()
 {
-    std::packaged_task<ConnectionGuard()>task([this]()->ConnectionGuard{
+    auto task = std::make_shared<std::packaged_task<ConnectionGuard()>>([this]()->ConnectionGuard{
         Connection* conn=nullptr;
         {
         std::unique_lock<std::mutex> lock(mutex_);
@@ -149,8 +156,9 @@ std::future<ConnectionGuard> ConnectionPool::acquire()
        }
         return ConnectionGuard(conn,[this](Connection* conn){this->release(conn);});
        });
-        std::future<ConnectionGuard> f=task.get_future();
-        internal_pool_->submit(std::move(task));
+        std::future<ConnectionGuard> f=task->get_future();
+        internal_pool_->submit([task]() {
+        (*task)(); });
         return f;
 }
 void  ConnectionPool::scanLoop()
@@ -159,7 +167,7 @@ void  ConnectionPool::scanLoop()
     {   auto  time=std::chrono::seconds(30);
         {
         std::unique_lock<std::mutex>lock(mutex_);
-        cv_.wait_for(lock,time,[]{return stopping_;});
+        cv_.wait_for(lock,time,[this]{return stopping_;});
         if(stopping_)
         return ;
         std::vector<Connection*> tem_;

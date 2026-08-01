@@ -36,3 +36,5 @@ Connection* ConnectionGuard::operator->()
 {
     return conn_;
 }
+bool ConnectionGuard::empty()
+{  return conn_==nullptr;}

@@ -16,3 +16,5 @@ set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
 
 # 生成可执行文件，名字统一用main
 add_executable(main main.cpp ${SRC_LIST})
+find_package(SQLite3 REQUIRED)
+target_link_libraries(main PRIVATE SQLite::SQLite3)

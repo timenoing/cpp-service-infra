@@ -2,6 +2,7 @@
 #define CONNECTION_H
 #include<sqlite3.h>
 #include<string>
+#include"Cursor.h"
 class Cursor;
 class Connection
 {
@@ -15,6 +16,7 @@ class Connection
     Connection(const std::string& filename);
     ~Connection();
     bool ping();
+    bool isvalid();
     private:
     sqlite3* db_;
   

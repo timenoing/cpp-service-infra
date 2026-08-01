@@ -14,6 +14,7 @@ class ConnectionGuard
     ConnectionGuard (ConnectionGuard&& other) noexcept;
     ConnectionGuard& operator =(ConnectionGuard&& other) noexcept;
     Connection* operator->();
+    bool empty();
     
     
     private:

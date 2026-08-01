@@ -33,7 +33,7 @@ class ConnectionPool
   private:
   bool expand();
   void scanLoop();
-  bool stopping_;
+  bool stopping_=false;
   std::string filename_;
   size_t min_conn_;
   size_t max_conn_;
