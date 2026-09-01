@@ -49,7 +49,7 @@ bool Connection::ping()
   if(!db_) return false;
   return execute("SELECT 1;");
 }
-bool Connection::isvalid()
+bool Connection::isValid()
 {
     return db_!=nullptr;
 }

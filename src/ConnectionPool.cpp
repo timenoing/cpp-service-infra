@@ -12,7 +12,14 @@ ConnectionPool::ConnectionPool(const std::string& filename,size_t min_conn,size_
 {
     for(size_t i=0;i<min_conn_;++i)
     {
-        idle_.push_back(new Connection(filename_));
+        try
+        {
+         idle_.push_back(new Connection(filename_));
+        }
+        catch(...)
+        {
+        Logger::Instance().Log(WARN,"new Connection异常","请检查");
+        }
     }
     scanner_thread_=std::thread(&ConnectionPool::scanLoop,this);
 }
@@ -51,6 +58,7 @@ void ConnectionPool::release(Connection* conn)
     {
     in_use_.remove(conn);
     borrow_time_.erase(conn);
+
     if(stopping_)
     {
     delete conn;
@@ -78,8 +86,8 @@ bool ConnectionPool::expand()
   return false;
   total_conn_+=need;
   }
-  std::vector<Connection*> tem_; size_t num=need; size_t count=0;
-  for(size_t i=0;i<num;++i)
+  std::vector<Connection*> tem_; size_t retries=need; size_t count=0;
+  for(size_t i=0;i<retries;++i)
   {
     Connection* conn=new Connection(filename_);
   if(conn->isvalid())
@@ -87,7 +95,7 @@ bool ConnectionPool::expand()
   tem_.push_back(conn);
   ++count;
   }
-  else {delete conn;++num; if(num>5) break;}
+  else {delete conn;++retries; if(retries>5) break;}
   }
   {
     std::unique_lock<std::mutex> lock(mutex_);
@@ -141,6 +149,7 @@ std::future<ConnectionGuard> ConnectionPool::acquire()
         idle_. pop_back();
         in_use_.push_back(conn);
         borrow_time_.emplace(conn,std::chrono::steady_clock::now());
+        warn_.erase(conn);
 
         }
          if(!conn->ping())
@@ -149,9 +158,11 @@ std::future<ConnectionGuard> ConnectionPool::acquire()
          std::unique_lock<std::mutex> lock(mutex_);
          total_conn_--;
          in_use_.remove(conn);
+         warn_.erase(conn);
          borrow_time_.erase(conn);
          }
          delete conn;
+         cv_.notify_one();
          return ConnectionGuard(nullptr,nullptr);
        }
         return ConnectionGuard(conn,[this](Connection* conn){this->release(conn);});
@@ -170,40 +181,40 @@ void  ConnectionPool::scanLoop()
         cv_.wait_for(lock,time,[this]{return stopping_;});
         if(stopping_)
         return ;
-        std::vector<Connection*> tem_;
         for(const auto& pair:borrow_time_)
         {   auto now=std::chrono::steady_clock::now();
             if(now-pair.second>std::chrono::seconds(5))
-            tem_.push_back(pair.first);
-        }
-        for(auto* conn:tem_)
-        {
-            in_use_.remove(conn);
-            idle_.push_back(conn);
-            borrow_time_.erase(conn);
-            return_time_.emplace(conn,std::chrono::steady_clock::now());
-
+            {
+            if(warn_[pair.first]<=0)
+            {
+            warn_[pair.first]++;
+            Logger::Instance().Log(WARN,"连接超时未还","警告");
+            }
+            }
+            
         }
         std::vector<Connection*> return_tem_;
         if(total_conn_>min_conn_)
         {
         for(const auto& pair:return_time_)
         {
-            auto return_time=std::chrono::steady_clock::now();
-            if(return_time-pair.second>std::chrono::seconds(30))
+            auto elapsed=std::chrono::steady_clock::now();
+        if(elapsed-pair.second>std::chrono::seconds(30))
             return_tem_.push_back(pair.first);
         }
         for(const auto& conn:return_tem_)
         {
+            if(total_conn_<=min_conn_)
+            break;
             idle_.remove(conn);
             return_time_.erase(conn);
+            warn_.erase(conn);
             total_conn_--;
             delete conn;
         }
         }
 
         }
-        cv_.notify_one();
     }
 
 }

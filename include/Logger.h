@@ -1,6 +1,5 @@
 #ifndef LOGGER_H
 #define LOGGER_H
-
 #include <iostream>
 #include <mutex>
 #include <thread>
@@ -16,8 +15,6 @@
     ERROR,
     FATAL
 };
-
-
 class Logger {
 public:
 

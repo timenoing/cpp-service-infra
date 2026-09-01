@@ -73,8 +73,6 @@ Logger& Logger::Instance()
       }
    
      }
-
-
     void Logger::Log(LogLevel level, const std::string& msg,const std::string& opreation)
      {
           std::string log_line=Format(level, msg, opreation);

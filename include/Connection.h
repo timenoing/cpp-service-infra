@@ -16,7 +16,7 @@ class Connection
     Connection(const std::string& filename);
     ~Connection();
     bool ping();
-    bool isvalid();
+    bool isValid();
     private:
     sqlite3* db_;
   

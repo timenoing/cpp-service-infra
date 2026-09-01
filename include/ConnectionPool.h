@@ -45,6 +45,7 @@ class ConnectionPool
   std::unique_ptr<ThreadPool>  internal_pool_;
   std::unordered_map<Connection*,std::chrono::steady_clock::time_point> borrow_time_;
   std::unordered_map<Connection*,std::chrono::steady_clock::time_point> return_time_;
+  std::unordered_map<Connection*,size_t> warn_;
   size_t total_conn_ =0;
 
 
