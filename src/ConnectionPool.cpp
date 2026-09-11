@@ -90,7 +90,7 @@ bool ConnectionPool::expand()
   for(size_t i=0;i<retries;++i)
   {
     Connection* conn=new Connection(filename_);
-  if(conn->isvalid())
+  if(conn->isValid())
   {
   tem_.push_back(conn);
   ++count;

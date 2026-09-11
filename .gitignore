@@ -6,3 +6,13 @@ build/
 bin/
 logs/
 .vscode/
+src/client
+build/
+compile_commands.json
+9.2main.cpp
+build/
+src/client
+src/server
+compile_commands.json
+9.2main.cpp
+core.*

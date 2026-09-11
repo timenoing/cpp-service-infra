@@ -3,18 +3,28 @@ project(cpp-service-infra)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# 头文件路径
-include_directories(include)
+# 重点！加上 ${PROJECT_SOURCE_DIR} 项目根目录！
+include_directories(
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/src
+)
 
-# 收集src目录下所有cpp源码
-include_directories(${PROJECT_SOURCE_DIR}/include)
-aux_source_directory(./src SRC_LIST)
+set(COMMON_SRC
+    src/Connection.cpp
+    src/ConnectionGuard.cpp
+    src/ConnectionPool.cpp
+    src/Cursor.cpp
+    src/Epoll.cpp
+    src/Logger.cpp
+    src/ThreadPool.cpp
+    src/Trace.cpp
+    src/message.cpp
+)
 
-# 编译产物输出到bin文件夹
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
-
-# 生成可执行文件，名字统一用main
-add_executable(main main.cpp ${SRC_LIST})
+add_executable(server 9.2main.cpp ${COMMON_SRC})
 find_package(SQLite3 REQUIRED)
-target_link_libraries(main PRIVATE SQLite::SQLite3)
+target_link_libraries(server PRIVATE SQLite::SQLite3)
