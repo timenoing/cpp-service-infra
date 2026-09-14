@@ -2,60 +2,83 @@
 #include "ThreadPool.h"
 #include <unistd.h>
 #include <vector>
-void Epoll::onreadable(int fd,int event)
+bool Epoll::senddata(const std::string& data,int fd,fd_status& it)
 {
-    char buf[1024];
-    int n=recv(fd, buf, sizeof(buf)-1, 0);
-    if(n>0)
-    {
-    buf[n]='\0';
-    std::vector<char> data(buf,buf+n);
-    printf("收到 %d 字节\n",n);
-    auto& it=status.find((fd))->second;
-    if(it.Outbuffer.empty()==true && it.idx==0){
-      int achieve=send(fd,data.data(),data.size(),0);
-       if(achieve<n)
+int achieve=send(fd,data.data(),data.size(),0);
+       if(achieve<data.size())
     {
       if(achieve==-1 )
       {
-      if (errno == EAGAIN){
+      if (errno == EAGAIN||errno == EWOULDBLOCK ||errno == EINTR ){
         it.Outbuffer.insert(it.Outbuffer.end(),data.begin(),data.end());
-        struct epoll_event ev;
-      ev.events=EPOLLIN |EPOLLOUT;
-      ev.data.fd=fd;
-      epoll_ctl(epfd, EPOLL_CTL_MOD, fd, &ev);
-      return;
+      set_event(fd, EPOLLIN |EPOLLOUT);
+      return true;
       }
       onclose(fd);
-      return;
+      return false;
       }else{
         it.Outbuffer.insert(it.Outbuffer.end(),data.begin()+achieve,data.end());
-        struct epoll_event ev;
-      ev.events=EPOLLIN |EPOLLOUT;
-      ev.data.fd=fd;
-      epoll_ctl(epfd, EPOLL_CTL_MOD, fd, &ev);
+        set_event(fd, EPOLLIN |EPOLLOUT);
       }
     }
-    }else{
-      it.Outbuffer.insert(it.Outbuffer.end(),data.begin(),data.end());
+    return true;
+}
+void Epoll::onreadable(int fd,int event)
+{
+    char buf[1024*64];
+    while(1){
+      int n=recv(fd, buf, sizeof(buf), 0);
+      auto& it=status.find(fd)->second;
+      if(n>0)
+    {
+    it.decoder.feed(buf, n);
+    bool pass=it.decoder.brokenmessage();
+    if(pass!=true){
+    std::vector<std::string> msg=it.decoder.take();
+    auto its=msg.size();
+    std::string data;
+    for(int i=0;i<its;++i)
+    {
+     data=net::encode(msg[i]);
+     if(senddata(data, fd, it))
+     {
+      
+     }else{
       return;
+     }
     }
-    }else if(n==0)
+    }
+    else{ onclose(fd); return;}
+    continue;
+    }else if(n==0){
+    it.peer_close = true;
+    bool pass=it.decoder.brokenmessage();
+    if(pass!=true){
+    std::vector<std::string> msg=it.decoder.take();
+    auto its=msg.size();
+    std::string data;
+    for(int i=0;i<its;++i)
     {
-    epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
-    close(fd);
-    status.erase(fd);
-    printf("删除连接");
+     data=net::encode(msg[i]);
+     if(senddata(data, fd, it))
+     {
+      
+     }else{
+      return;
+     }
+    }
+    }
+    if(it.Outbuffer.empty()){onclose(fd); return;}
+    else{ set_event(fd, EPOLLOUT);  return;}
     }else{
-    perror("连接出错");
-    if(errno!=EAGAIN)
+    if(errno!=EAGAIN&&errno!=EINTR)
     {
-    epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
-    close(fd);
-    status.erase(fd);
-    perror("recv错误");
+    onclose(fd);
     }
+    return;
   }
+  }
+  
 }
 void Epoll::onwrite(int fd,int &event)
 {
@@ -66,15 +89,13 @@ void Epoll::onwrite(int fd,int &event)
      n=send(fd,it.Outbuffer.data()+it.idx,it.Outbuffer.size()-it.idx,0);
     if(n==(it.Outbuffer.size()-it.idx))
     {
-      struct epoll_event ev;
-      ev.events=EPOLLIN;
-      ev.data.fd=fd;
-      epoll_ctl(epfd, EPOLL_CTL_MOD, fd, &ev);
       it.idx=0;
       it.Outbuffer.erase(it.Outbuffer.begin(),it.Outbuffer.end());
+      if(it.peer_close==true){onclose(fd); return;}
+      set_event(fd, EPOLLIN);
       return ;
     }else if(n==-1){
-      if (errno ==EAGAIN){
+      if (errno ==EAGAIN|| errno == EWOULDBLOCK ||errno == EINTR){
       return;
     }
       onclose(fd);
@@ -124,7 +145,13 @@ void Epoll::onclose(int fd)
     close(fd);
     status.erase(fd);
 }
-
+void Epoll::set_event(int fd,uint32_t event)
+{
+    struct epoll_event ev;
+    ev.events=event;
+    ev.data.fd=fd;
+    epoll_ctl(epfd, EPOLL_CTL_MOD, fd, &ev);
+}
 int Epoll::set_nonblocking(int fd) { //设置阻塞
           int flags = fcntl(fd, F_GETFL, 0);  // 1. 先拿到当前的文件状态标志
           if (flags == -1) {
@@ -222,9 +249,13 @@ bool Epoll::start(int port){
    while(1)
    {
      int nfds =epoll_wait(epfd, ev64, 64, -1);
-     if(nfds<0) //失效了
-     {
-        break;
+      if(nfds<0) //失效了
+      {
+         if(errno==EINTR)
+         {
+            continue;
+         }
+         break;
      }else if(nfds>0) //收到了连接
      {
      

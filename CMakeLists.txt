@@ -21,10 +21,12 @@ set(COMMON_SRC
     src/Logger.cpp
     src/ThreadPool.cpp
     src/Trace.cpp
-    src/message.cpp
+    src/Message.cpp
 )
 
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
 add_executable(server 9.2main.cpp ${COMMON_SRC})
 find_package(SQLite3 REQUIRED)
 target_link_libraries(server PRIVATE SQLite::SQLite3)
+
+add_executable(message_test test/message_test.cpp src/Message.cpp)

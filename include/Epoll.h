@@ -12,6 +12,7 @@
 #include<string.h>
 #include<arpa/inet.h>
 #include"ThreadPool.h"
+#include <Message.h>
 #include <csignal>
 #include"Logger.h"
 #include <unordered_set>
@@ -29,20 +30,22 @@ class Epoll{
     void onclose(int fd);
     void onwrite(int fd,int &event);
     void onreadable( int fd,int event);
+    void set_event(int fd,uint32_t event);
     int epfd;
     int m_listen;
     struct epoll_event ev64[64];
     struct sockaddr_in client_addr;
     struct fd_status{
       bool live;
-      std::vector<char> Inbuffer;
       std::vector<char> Outbuffer;
       int idx=0;
+      net::messagedecode decoder;
+      bool peer_close=false;
     };
     std::unordered_map<int, fd_status> status;
     socklen_t client_len;
     struct epoll_event ev;//兴趣列表
-
+    bool senddata(const std::string& data,int fd,fd_status& it);
 
 };
 #endif
