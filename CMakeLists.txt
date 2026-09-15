@@ -30,3 +30,5 @@ find_package(SQLite3 REQUIRED)
 target_link_libraries(server PRIVATE SQLite::SQLite3)
 
 add_executable(message_test test/message_test.cpp src/Message.cpp)
+
+add_executable(test_client src/test_client.cpp src/Message.cpp)
