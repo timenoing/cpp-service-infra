@@ -2,112 +2,6 @@
 #include "ThreadPool.h"
 #include <unistd.h>
 #include <vector>
-bool Epoll::senddata(const std::string& data,int fd,fd_status& it)
-{
-int achieve=send(fd,data.data(),data.size(),0);
-       if(achieve<data.size())
-    {
-      if(achieve==-1 )
-      {
-      if (errno == EAGAIN||errno == EWOULDBLOCK ||errno == EINTR ){
-        it.Outbuffer.insert(it.Outbuffer.end(),data.begin(),data.end());
-      set_event(fd, EPOLLIN |EPOLLOUT);
-      return true;
-      }
-      onclose(fd);
-      return false;
-      }else{
-        it.Outbuffer.insert(it.Outbuffer.end(),data.begin()+achieve,data.end());
-        set_event(fd, EPOLLIN |EPOLLOUT);
-      }
-    }
-    return true;
-}
-void Epoll::onreadable(int fd,int event)
-{
-    char buf[1024*64];
-    while(1){
-      int n=recv(fd, buf, sizeof(buf), 0);
-      auto& it=status.find(fd)->second;
-      if(n>0)
-    {
-    it.decoder.feed(buf, n);
-    bool pass=it.decoder.brokenmessage();
-    if(pass!=true){
-    std::vector<std::string> msg=it.decoder.take();
-    auto its=msg.size();
-    std::string data;
-    for(int i=0;i<its;++i)
-    {
-     data=net::encode(msg[i]);
-     if(senddata(data, fd, it))
-     {
-      
-     }else{
-      return;
-     }
-    }
-    }
-    else{ onclose(fd); return;}
-    continue;
-    }else if(n==0){
-    it.peer_close = true;
-    bool pass=it.decoder.brokenmessage();
-    if(pass!=true){
-    std::vector<std::string> msg=it.decoder.take();
-    auto its=msg.size();
-    std::string data;
-    for(int i=0;i<its;++i)
-    {
-     data=net::encode(msg[i]);
-     if(senddata(data, fd, it))
-     {
-      
-     }else{
-      return;
-     }
-    }
-    }
-    if(it.Outbuffer.empty()){onclose(fd); return;}
-    else{ set_event(fd, EPOLLOUT);  return;}
-    }else{
-    if(errno!=EAGAIN&&errno!=EINTR)
-    {
-    onclose(fd);
-    }
-    return;
-  }
-  }
-  
-}
-void Epoll::onwrite(int fd,int &event)
-{
-  ssize_t n=0;
-  auto& it=status.find(fd)->second;
-  while(it.idx<it.Outbuffer.size())
-  {
-     n=send(fd,it.Outbuffer.data()+it.idx,it.Outbuffer.size()-it.idx,0);
-    if(n==(it.Outbuffer.size()-it.idx))
-    {
-      it.idx=0;
-      it.Outbuffer.erase(it.Outbuffer.begin(),it.Outbuffer.end());
-      if(it.peer_close==true){onclose(fd); return;}
-      set_event(fd, EPOLLIN);
-      return ;
-    }else if(n==-1){
-      if (errno ==EAGAIN|| errno == EWOULDBLOCK ||errno == EINTR){
-      return;
-    }
-      onclose(fd);
-      return;
-  }else if(n<it.Outbuffer.size()-it.idx){
-      it.idx+=n;
-      continue;
-    }
-  
-  }
-
-}
 void Epoll::onaccept(int fd)
 {
    client_len=(sizeof(client_addr));
@@ -128,29 +22,20 @@ void Epoll::onaccept(int fd)
       close(client);
       return ;
       }
-      ev.events = EPOLLIN;//监听新连接
+      ev.events = EPOLLIN| EPOLLRDHUP;//监听新连接
       ev.data.fd = client;
       char ip[INET_ADDRSTRLEN];
       inet_ntop(AF_INET,&client_addr.sin_addr,ip,sizeof(ip));
       int port=ntohs(client_addr.sin_port);
       printf("连接到了 ip为%s 端口为%d\n",ip,port);
       epoll_ctl(epfd, EPOLL_CTL_ADD, client, &ev);
-      struct fd_status fd_status;
-      fd_status.live=true;
-      status.emplace(client,fd_status);
+      status.emplace(client,net::Connection(epfd,client));
 }
 void Epoll::onclose(int fd)
 {
    epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
-    close(fd);
     status.erase(fd);
-}
-void Epoll::set_event(int fd,uint32_t event)
-{
-    struct epoll_event ev;
-    ev.events=event;
-    ev.data.fd=fd;
-    epoll_ctl(epfd, EPOLL_CTL_MOD, fd, &ev);
+    close(fd);
 }
 int Epoll::set_nonblocking(int fd) { //设置阻塞
           int flags = fcntl(fd, F_GETFL, 0);  // 1. 先拿到当前的文件状态标志
@@ -190,29 +75,28 @@ int Epoll::create_fd(int a){ //放在那个端口上
     }
     return mlisten;
 }
-void Epoll::addevent(int fd,int event,int cancelEvent)
+void Epoll::addevent(int fd,int event,int cancelEvent,net::Connection& con)
 {
  if(fd==m_listen)
  {
       onaccept(fd);
       return;     
- }else if(event & (EPOLLERR | EPOLLHUP))
+ }else if(status.find(fd)==status.end())
  {
-    onclose(fd);
-    return;
- }else if(event & EPOLLRDHUP)
+  
+ }else if(event & (EPOLLERR | EPOLLHUP))
  {
     onclose(fd);
     return;
  }else if(event & EPOLLIN)
  {
   
-  onreadable( fd, event);
+  if(con.handreadable()!=true) {onclose(fd);}
   return;
    
 }else if(event & (EPOLLIN |EPOLLOUT))
 {
-   onwrite( fd, event);
+   if(con.handwrite()!=true) {onclose(fd); }
   return;
 }
 }
@@ -266,7 +150,8 @@ bool Epoll::start(int port){
       if(fd==m_listen||status.find( fd)!=status.end())
       {
         int fd=ev64[i].data.fd;
-        addevent(fd, event_flags, event_flags);
+        auto& con=status.find(fd)->second;
+        addevent(fd, event_flags, event_flags, con);
       }  
     }
     }

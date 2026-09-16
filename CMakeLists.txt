@@ -22,6 +22,7 @@ set(COMMON_SRC
     src/ThreadPool.cpp
     src/Trace.cpp
     src/Message.cpp
+    src/net/Connection.cpp
 )
 
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
