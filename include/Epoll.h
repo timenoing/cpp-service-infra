@@ -22,6 +22,7 @@ class Epoll{
     Epoll(); 
     ~Epoll();
     bool start(int port);//创建变量函数
+    void set_handler(std::function<void(net::Connection&,const std::string&)> message_handler);
     private:
     ThreadPool epoll_poll;//线程池
     int  set_nonblocking(int fd);//阻塞函数
@@ -36,5 +37,6 @@ class Epoll{
     std::unordered_map<int, net::Connection> status;
     socklen_t client_len;
     struct epoll_event ev;//兴趣列表
+    std::function<void(net::Connection&,const std::string&)> message_handler;
 };
 #endif

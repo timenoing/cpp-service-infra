@@ -2,6 +2,10 @@
 #include "ThreadPool.h"
 #include <unistd.h>
 #include <vector>
+void Epoll::set_handler(std::function<void (net::Connection &, const std::string &)> messge_handler)
+{
+  message_handler=messge_handler;
+}
 void Epoll::onaccept(int fd)
 {
    client_len=(sizeof(client_addr));
@@ -27,9 +31,10 @@ void Epoll::onaccept(int fd)
       char ip[INET_ADDRSTRLEN];
       inet_ntop(AF_INET,&client_addr.sin_addr,ip,sizeof(ip));
       int port=ntohs(client_addr.sin_port);
-      printf("连接到了 ip为%s 端口为%d\n",ip,port);
+      std::string log ="连接到了ip为" + std::string(ip) + " 端口为" + std::to_string(port);
+      Logger::Instance().Log(INFO, log, "Epoll");
       epoll_ctl(epfd, EPOLL_CTL_ADD, client, &ev);
-      status.emplace(client,net::Connection(epfd,client));
+      status.emplace(client,net::Connection(epfd,client,message_handler));
 }
 void Epoll::onclose(int fd)
 {
@@ -128,7 +133,7 @@ bool Epoll::start(int port){
     close(epfd);
     return false;
    }
-   printf("成功启动\n");
+  Logger::Instance().Log(INFO, "成功启动", "Epoll");
    client_len=(sizeof(client_addr));
    while(1)
    {

@@ -16,10 +16,11 @@
 #include <csignal>
 #include"Logger.h"
 #include <unordered_set>
+#include <functional>
 namespace net {
 class Connection{
     public:
-     Connection(int epfd,int fd);
+     Connection(int epfd,int fd,std::function<void(net::Connection&,const std::string&)> handler);
      ~Connection();
  struct fd_status{
       bool live;
@@ -39,6 +40,7 @@ class Connection{
     bool closed=false;
     socklen_t client_len;
     struct epoll_event ev;//兴趣列表
+    std::function<void(net::Connection&,const std::string&)> handler;
 };
 
 }

@@ -1,6 +1,6 @@
 #include "net/Connection.h"
-net::Connection::Connection(int epfd,int fd)
-  :epfd(epfd),fd(fd)
+net::Connection::Connection(int epfd,int fd,std::function<void(net::Connection&,const std::string&)> handler)
+  :epfd(epfd),fd(fd),handler(handler)
 {
    
 }
@@ -19,17 +19,10 @@ bool  net::Connection::handreadable(){
     bool pass=it.decoder.brokenmessage();
     if(pass!=true){
     std::vector<std::string> msg=it.decoder.take();
-    auto its=msg.size();
-    std::string data;
-    for(int i=0;i<its;++i)
+    for(auto& str :msg)
     {
-     data=net::encode(msg[i]);
-     if(senddata(data))
-     {
-      
-     }else{
-      return false;
-     }
+     handler(*this,str);
+     if(closed) return false;
     }
     }
     else{  return false;}
@@ -39,17 +32,10 @@ bool  net::Connection::handreadable(){
     bool pass=it.decoder.brokenmessage();
     if(pass!=true){
     std::vector<std::string> msg=it.decoder.take();
-    auto its=msg.size();
-    std::string data;
-    for(int i=0;i<its;++i)
+   for(auto& str :msg)
     {
-     data=net::encode(msg[i]);
-     if(senddata(data))
-     {
-      
-     }else{
-      return false;
-     }
+     handler(*this,str);
+     if(closed) return false;
     }
     }
     if(it.Outbuffer.empty()){  return false;}
@@ -91,8 +77,9 @@ ssize_t n=0;
   }
   
 }
-bool net::Connection::senddata(const std::string& data)
+bool net::Connection::senddata(const std::string& accept)
 {
+ std::string data= net::encode(accept);
 int achieve=send(fd,data.data(),data.size(),0);
        if(achieve<data.size())
     {
@@ -103,7 +90,7 @@ int achieve=send(fd,data.data(),data.size(),0);
       set_event(EPOLLIN |EPOLLOUT);
       return true;
       }
-      
+      closed=true;
       return false;
       }else{
         status.Outbuffer.insert(status.Outbuffer.end(),data.begin()+achieve,data.end());
