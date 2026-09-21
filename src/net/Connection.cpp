@@ -1,5 +1,5 @@
 #include "net/Connection.h"
-net::Connection::Connection(int epfd,int fd,std::function<void(net::Connection&,const std::string&)> handler)
+net::Connection::Connection(int epfd,int fd,std::function<std::string (const std::string&)> handler)
   :epfd(epfd),fd(fd),handler(handler)
 {
    
@@ -21,8 +21,8 @@ bool  net::Connection::handreadable(){
     std::vector<std::string> msg=it.decoder.take();
     for(auto& str :msg)
     {
-     handler(*this,str);
-     if(closed) return false;
+      std::string resp=handler(str);
+     if(!senddata(resp)) return false;
     }
     }
     else{  return false;}
@@ -34,8 +34,8 @@ bool  net::Connection::handreadable(){
     std::vector<std::string> msg=it.decoder.take();
    for(auto& str :msg)
     {
-     handler(*this,str);
-     if(closed) return false;
+      std::string resp=handler(str);
+     if(!senddata(resp)) return false;
     }
     }
     if(it.Outbuffer.empty()){  return false;}
@@ -85,7 +85,7 @@ int achieve=send(fd,data.data(),data.size(),0);
     {
       if(achieve==-1 )
       {
-      if (errno == EAGAIN||errno == EWOULDBLOCK ||errno == EINTR ){
+      if (errno == EAGAIN|| errno == EWOULDBLOCK ||errno == EINTR ){
         status.Outbuffer.insert(status.Outbuffer.end(),data.begin(),data.end());
       set_event(EPOLLIN |EPOLLOUT);
       return true;

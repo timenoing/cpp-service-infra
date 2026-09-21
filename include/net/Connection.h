@@ -20,7 +20,7 @@
 namespace net {
 class Connection{
     public:
-     Connection(int epfd,int fd,std::function<void(net::Connection&,const std::string&)> handler);
+     Connection(int epfd,int fd,std::function<std::string (const std::string&)> handler);
      ~Connection();
  struct fd_status{
       bool live;
@@ -28,6 +28,7 @@ class Connection{
       int idx=0;
       net::messagedecode decoder;
       bool peer_close=false;
+      uint64_t conn_id;
     };
     fd_status status;
     bool handreadable();
@@ -40,7 +41,7 @@ class Connection{
     bool closed=false;
     socklen_t client_len;
     struct epoll_event ev;//兴趣列表
-    std::function<void(net::Connection&,const std::string&)> handler;
+    std::function<std::string (const std::string&)> handler;
 };
 
 }

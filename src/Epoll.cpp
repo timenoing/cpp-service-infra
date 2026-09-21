@@ -2,7 +2,7 @@
 #include "ThreadPool.h"
 #include <unistd.h>
 #include <vector>
-void Epoll::set_handler(std::function<void (net::Connection &, const std::string &)> messge_handler)
+void Epoll::set_handler(std::function<std::string (const std::string &)> messge_handler)
 {
   message_handler=messge_handler;
 }
@@ -75,8 +75,8 @@ int Epoll::create_fd(int a){ //放在那个端口上
     }
     if(listen(mlisten, 128)<0)
     {
-        close(mlisten);
-        return -1;
+      close(mlisten);
+    return -1;
     }
     return mlisten;
 }
