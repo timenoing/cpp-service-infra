@@ -18,6 +18,7 @@ set(COMMON_SRC
     src/ConnectionPool.cpp
     src/Cursor.cpp
     src/Epoll.cpp
+    src/Donequeue.cpp
     src/Logger.cpp
     src/ThreadPool.cpp
     src/Trace.cpp

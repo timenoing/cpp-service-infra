@@ -15,6 +15,9 @@
 #include<iostream>
 #include<random>
 #include<cstdlib>
+#include<set>
+#include<algorithm>
+#include<iterator>
 #include<Message.h>
 int create_client(int a){ //放在那个端口上
     struct sockaddr_in addr;
@@ -150,23 +153,26 @@ int regression(int fd,int total)
       total_bytes+=sent[i].size();
     }
     std::vector<std::string> got=reservemessage(fd,n);
-    if((int)got.size()<n)
+    std::multiset<std::string> expect(sent.begin(),sent.end());
+    std::multiset<std::string> actual(got.begin(),got.end());
+    std::vector<std::string> only_sent;
+    std::vector<std::string> only_got;
+    std::set_difference(expect.begin(),expect.end(),actual.begin(),actual.end(),std::back_inserter(only_sent));
+    std::set_difference(actual.begin(),actual.end(),expect.begin(),expect.end(),std::back_inserter(only_got));
+    if(!only_sent.empty()||!only_got.empty())
     {
-      std::cout<<"FAIL batch@"<<done<<" lost "<<(n-(int)got.size())<<" messages"<<std::endl;
-      bad+=n-(int)got.size();
-    }
-    for(size_t i=0;i<got.size()&&i<sent.size();++i)
-    {
-      if(got[i]!=sent[i])
-      {
-        std::cout<<"FAIL batch@"<<done<<" idx="<<i<<" sent_len="<<sent[i].size()<<" recv_len="<<got[i].size()<<std::endl;
-        ++bad;
-      }
+      bad+=(int)(only_sent.size()+only_got.size());
+      std::cout<<"FAIL batch@"<<done<<" lost="<<only_sent.size()<<" extra="<<only_got.size();
+      if(!only_sent.empty())
+        std::cout<<" sample_lost_len="<<only_sent.front().size();
+      if(!only_got.empty())
+        std::cout<<" sample_extra_len="<<only_got.front().size();
+      std::cout<<std::endl;
     }
     done+=n;
   }
   if(bad==0)
-    std::cout<<"PASS N="<<total<<" bytes="<<total_bytes<<std::endl;
+    std::cout<<"PASS N="<<total<<" bytes="<<total_bytes<<" (order-independent)"<<std::endl;
   else
     std::cout<<"FAIL N="<<total<<" bytes="<<total_bytes<<" bad="<<bad<<std::endl;
   return bad==0?0:1;

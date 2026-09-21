@@ -34,13 +34,35 @@ void Epoll::onaccept(int fd)
       std::string log ="连接到了ip为" + std::string(ip) + " 端口为" + std::to_string(port);
       Logger::Instance().Log(INFO, log, "Epoll");
       epoll_ctl(epfd, EPOLL_CTL_ADD, client, &ev);
-      status.emplace(client,net::Connection(epfd,client,message_handler));
+      conn_id++;
+      
+      status.emplace(client,net::Connection(epfd,client,conn_id,&epoll_poll,&done,message_handler));
 }
 void Epoll::onclose(int fd)
 {
    epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
     status.erase(fd);
     close(fd);
+}
+void Epoll::ondone(){
+  uint64_t cut; 
+  read(done.fd(),&cut,sizeof(cut));
+  for( auto& item : done.drain()){
+    auto it=status.find(item.fd);
+    if(it==status.end()||it->second.conn_id!=item.id) { continue; }
+    net::Connection& con=it->second;
+    --con.inflight;
+    if(!con.senddata(item.resp))
+    { 
+      onclose(item.fd);
+      continue;
+    }
+    if(con.status.peer_close==true&&con.status.Outbuffer.empty()&& con.inflight==0)
+    {
+      onclose(item.fd);
+      continue;
+    }
+  }
 }
 int Epoll::set_nonblocking(int fd) { //设置阻塞
           int flags = fcntl(fd, F_GETFL, 0);  // 1. 先拿到当前的文件状态标志
@@ -75,21 +97,27 @@ int Epoll::create_fd(int a){ //放在那个端口上
     }
     if(listen(mlisten, 128)<0)
     {
-      close(mlisten);
-    return -1;
+        close(mlisten);
+        return -1;
     }
     return mlisten;
 }
-void Epoll::addevent(int fd,int event,int cancelEvent,net::Connection& con)
+void Epoll::addevent(int fd,int event,int cancelEvent)
 {
+ if(fd==done.fd())
+ {
+  ondone();
+  return;
+ }
  if(fd==m_listen)
  {
       onaccept(fd);
       return;     
- }else if(status.find(fd)==status.end())
- {
-  
- }else if(event & (EPOLLERR | EPOLLHUP))
+ }
+ auto it=status.find((fd));
+ if(it==status.end()) return;
+ net::Connection& con=it->second;
+ if(event & (EPOLLERR | EPOLLHUP))
  {
     onclose(fd);
     return;
@@ -108,7 +136,7 @@ void Epoll::addevent(int fd,int event,int cancelEvent,net::Connection& con)
 bool Epoll::start(int port){
    epfd=epoll_create1(0); //一个收发室
    m_listen= this-> create_fd(port); //创建一个fd端口号为8888
-    if(m_listen<0)
+    if(m_listen<0||done.fd()<0)
    {
    return false;
    }
@@ -120,14 +148,16 @@ bool Epoll::start(int port){
     return false;
    
    }
-   if(set_nonblocking(m_listen)==-1)
+   if(set_nonblocking(m_listen)==-1||set_nonblocking(done.fd())==-1)
            {
             close(m_listen);
             return false;
            }
    ev.events = EPOLLIN;//监听新连接
    ev.data.fd = m_listen;
-   if(epoll_ctl(epfd,EPOLL_CTL_ADD , m_listen, &ev)<0)
+   ev_wake.events=EPOLLIN;
+   ev_wake.data.fd=done.fd();
+   if(epoll_ctl(epfd,EPOLL_CTL_ADD , m_listen, &ev)<0||epoll_ctl(epfd,EPOLL_CTL_ADD , done.fd(), &ev_wake)<0)
    {
     close(m_listen);
     close(epfd);
@@ -152,11 +182,10 @@ bool Epoll::start(int port){
     {
       int fd=ev64[i].data.fd;
       int event_flags=ev64[i].events;
-      if(fd==m_listen||status.find( fd)!=status.end())
+      if(fd==m_listen||status.find( fd)!=status.end()||fd==done.fd())
       {
-        int fd=ev64[i].data.fd;
-        auto& con=status.find(fd)->second;
-        addevent(fd, event_flags, event_flags, con);
+        
+        addevent(fd, event_flags, event_flags);
       }  
     }
     }

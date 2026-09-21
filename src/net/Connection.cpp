@@ -1,6 +1,6 @@
 #include "net/Connection.h"
-net::Connection::Connection(int epfd,int fd,std::function<std::string (const std::string&)> handler)
-  :epfd(epfd),fd(fd),handler(handler)
+net::Connection::Connection(int epfd,int fd,uint64_t conn_id,ThreadPool* poll,Donequeue* done,std::function<std::string (const std::string&)> handler)
+  :epfd(epfd),fd(fd),handler(handler),pool(poll),conn_id(conn_id),done(done)
 {
    
 }
@@ -21,8 +21,12 @@ bool  net::Connection::handreadable(){
     std::vector<std::string> msg=it.decoder.take();
     for(auto& str :msg)
     {
-      std::string resp=handler(str);
-     if(!senddata(resp)) return false;
+      inflight++;
+      pool->submit(
+        [h=handler,fd=fd,id=conn_id,msg=std::move(str),done=done]{
+          std::string resp=h(msg);
+          done->push(fd,id, resp);
+        });
     }
     }
     else{  return false;}
@@ -34,11 +38,16 @@ bool  net::Connection::handreadable(){
     std::vector<std::string> msg=it.decoder.take();
    for(auto& str :msg)
     {
-      std::string resp=handler(str);
-     if(!senddata(resp)) return false;
+    inflight++;
+    pool->submit(
+        [h=handler,fd=fd,id=conn_id,msg=std::move(str),done=done]{
+          std::string resp=h(msg);
+          done->push(fd,id, resp);
+        });
     }
     }
-    if(it.Outbuffer.empty()){  return false;}
+    if(it.Outbuffer.empty()&& inflight==0){  return false;}
+    else if(it.Outbuffer.empty()){  set_event(0); return true; }
     else{ set_event( EPOLLOUT);  return true;}
     }else{
     if(errno!=EAGAIN&&errno!=EINTR)
@@ -50,9 +59,11 @@ bool  net::Connection::handreadable(){
   }
 
 }
-bool  net::Connection::handwrite(){
+bool  net::Connection::handwrite(){ 
 ssize_t n=0;
   auto& it=status;
+  if(it.Outbuffer.empty())
+      return (it.peer_close && inflight==0) ? false : true;
   while(it.idx<it.Outbuffer.size())
   {
      n=send(fd,it.Outbuffer.data()+it.idx,it.Outbuffer.size()-it.idx,0);
@@ -60,7 +71,8 @@ ssize_t n=0;
     {
       it.idx=0;
       it.Outbuffer.erase(it.Outbuffer.begin(),it.Outbuffer.end());
-      if(it.peer_close==true){ return false;}
+    if(it.peer_close && inflight==0)  return false;
+    if(it.peer_close) { set_event(0); return true; }
       set_event(EPOLLIN);
       return true;
     }else if(n==-1){
@@ -85,7 +97,7 @@ int achieve=send(fd,data.data(),data.size(),0);
     {
       if(achieve==-1 )
       {
-      if (errno == EAGAIN|| errno == EWOULDBLOCK ||errno == EINTR ){
+      if (errno == EAGAIN||errno == EWOULDBLOCK ||errno == EINTR ){
         status.Outbuffer.insert(status.Outbuffer.end(),data.begin(),data.end());
       set_event(EPOLLIN |EPOLLOUT);
       return true;

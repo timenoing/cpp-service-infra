@@ -17,10 +17,11 @@
 #include"Logger.h"
 #include <unordered_set>
 #include <functional>
+#include "Donequeue.h"
 namespace net {
 class Connection{
     public:
-     Connection(int epfd,int fd,std::function<std::string (const std::string&)> handler);
+     Connection(int epfd,int fd,uint64_t conn_id,ThreadPool* poll,Donequeue* done, std::function<std::string (const std::string&)> handler);
      ~Connection();
  struct fd_status{
       bool live;
@@ -28,23 +29,21 @@ class Connection{
       int idx=0;
       net::messagedecode decoder;
       bool peer_close=false;
-      uint64_t conn_id;
     };
     fd_status status;
+    uint64_t conn_id;
     bool handreadable();
     bool handwrite();
     void set_event(uint32_t event);
     bool senddata(const std::string& data);
+    int inflight=0;
     private:
     int fd;
     int epfd;
     bool closed=false;
-    socklen_t client_len;
-    struct epoll_event ev;//兴趣列表
     std::function<std::string (const std::string&)> handler;
+    ThreadPool *pool;
+    Donequeue* done;
 };
-
 }
-
-
 #endif
