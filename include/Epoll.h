@@ -43,7 +43,7 @@ class Epoll{
    static void on_signal(int signo);
     int epfd;
     int m_listen;
-    struct epoll_event ev64[256];
+    struct epoll_event ev64[512];
     struct sockaddr_in client_addr;
     std::unordered_map<int, net::Connection> status;
     socklen_t client_len;

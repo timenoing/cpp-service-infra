@@ -8,7 +8,8 @@ void Epoll::set_handler(std::function<std::string (const std::string &)> messge_
 }
 void Epoll::onaccept(int fd)
 {
-    if(fd<0) return;
+   while(1){
+     if(fd<0) return;
    client_len=(sizeof(client_addr));
     int client=accept(m_listen,(struct sockaddr*)&client_addr, (socklen_t *)&client_len);//取出第一个连接
     if(client<0)
@@ -34,6 +35,7 @@ void Epoll::onaccept(int fd)
       epoll_ctl(epfd, EPOLL_CTL_ADD, client, &ev);
       conn_id++;
       status.emplace(client,net::Connection(epfd,client,conn_id,&epoll_poll,&done,message_handler));
+   }
 }
 void Epoll::onclose(int fd)
 {
@@ -92,7 +94,7 @@ int Epoll::create_fd(int a){ //放在那个端口上
       close(mlisten);
     return -1;
     }
-    if(listen(mlisten, 128)<0)
+    if(listen(mlisten, 1024)<0)
     {
         close(mlisten);
         return -1;
@@ -179,7 +181,7 @@ bool Epoll::start(int port){
        if(kv.second.inflight>0) { all_pass=false; break; }
       }
       if(all_pass||deadline<std::chrono::steady_clock::now()) {break;}
-      int npfd=epoll_wait(epfd, ev64, 256, 100);
+      int npfd=epoll_wait(epfd, ev64, 512, 100);
       for(int i=0;i<npfd;++i){
       int fd=ev64[i].data.fd;
       int event_flags=ev64[i].events;
@@ -192,7 +194,7 @@ bool Epoll::start(int port){
      }
      break;
      }
-     int nfds =epoll_wait(epfd, ev64, 256, -1);
+     int nfds =epoll_wait(epfd, ev64, 512, -1);
       if(nfds<0) //失效了
       {
          if(errno==EINTR)
