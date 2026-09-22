@@ -51,9 +51,7 @@ bool  net::Connection::handreadable(){
     else{ set_event( EPOLLOUT);  return true;}
     }else{
     if(errno!=EAGAIN&&errno!=EINTR)
-    {
-     return false;
-    }
+    {return false;}
     return true;
   }
   }

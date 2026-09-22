@@ -20,9 +20,9 @@ class Donequeue{
     void push(int fd,uint64_t id,std::string resp);
     std::deque<doit_item> drain();
     private:
+    std::deque<doit_item> queue;
     std::mutex mut;
     int wake_fd;
-    std::deque<doit_item> queue;
 };
 
 #endif

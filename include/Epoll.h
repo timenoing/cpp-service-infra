@@ -19,6 +19,11 @@
 #include<sys/eventfd.h>
 #include "net/Connection.h"
 #include<Donequeue.h>
+#include<atomic>
+#include <pthread.h>
+#include <time.h>
+#include <csignal>
+#include <netinet/tcp.h>
 class Epoll{
     public:
     Epoll(); 
@@ -28,15 +33,17 @@ class Epoll{
     private:
     Donequeue done;
     ThreadPool epoll_poll;//线程池
+    std::atomic<bool> stopping=false;
     int  set_nonblocking(int fd);//阻塞函数
     int  create_fd(int a); //套接字函数，a为端口号
     void addevent(int fd, int event,int cancelevent);
     void onaccept(int fd);
     void onclose(int fd);
     void ondone();
+   static void on_signal(int signo);
     int epfd;
     int m_listen;
-    struct epoll_event ev64[64];
+    struct epoll_event ev64[256];
     struct sockaddr_in client_addr;
     std::unordered_map<int, net::Connection> status;
     socklen_t client_len;
@@ -45,4 +52,5 @@ class Epoll{
     std::function<std::string (const std::string&)> message_handler;
     uint64_t conn_id=0;
 };
+static Epoll* g_epoll=nullptr;
 #endif

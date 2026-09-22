@@ -8,6 +8,7 @@ void Epoll::set_handler(std::function<std::string (const std::string &)> messge_
 }
 void Epoll::onaccept(int fd)
 {
+    if(fd<0) return;
    client_len=(sizeof(client_addr));
     int client=accept(m_listen,(struct sockaddr*)&client_addr, (socklen_t *)&client_len);//取出第一个连接
     if(client<0)
@@ -21,6 +22,8 @@ void Epoll::onaccept(int fd)
        return;
       }
     }
+    int opt = 1;
+    setsockopt(client, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
       if(set_nonblocking(client)==-1)
       {
       close(client);
@@ -28,14 +31,8 @@ void Epoll::onaccept(int fd)
       }
       ev.events = EPOLLIN| EPOLLRDHUP;//监听新连接
       ev.data.fd = client;
-      char ip[INET_ADDRSTRLEN];
-      inet_ntop(AF_INET,&client_addr.sin_addr,ip,sizeof(ip));
-      int port=ntohs(client_addr.sin_port);
-      std::string log ="连接到了ip为" + std::string(ip) + " 端口为" + std::to_string(port);
-      Logger::Instance().Log(INFO, log, "Epoll");
       epoll_ctl(epfd, EPOLL_CTL_ADD, client, &ev);
       conn_id++;
-      
       status.emplace(client,net::Connection(epfd,client,conn_id,&epoll_poll,&done,message_handler));
 }
 void Epoll::onclose(int fd)
@@ -117,6 +114,10 @@ void Epoll::addevent(int fd,int event,int cancelEvent)
  auto it=status.find((fd));
  if(it==status.end()) return;
  net::Connection& con=it->second;
+ if(stopping){
+    if(event & EPOLLOUT){ if(!con.handwrite()) onclose(fd); }
+    return;
+}
  if(event & (EPOLLERR | EPOLLHUP))
  {
     onclose(fd);
@@ -167,7 +168,31 @@ bool Epoll::start(int port){
    client_len=(sizeof(client_addr));
    while(1)
    {
-     int nfds =epoll_wait(epfd, ev64, 64, -1);
+     if(stopping){
+      close(m_listen);
+      m_listen=-1;
+    auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(3);
+     while(1){
+       bool all_pass=true;
+      for(auto& kv : status)
+      {
+       if(kv.second.inflight>0) { all_pass=false; break; }
+      }
+      if(all_pass||deadline<std::chrono::steady_clock::now()) {break;}
+      int npfd=epoll_wait(epfd, ev64, 256, 100);
+      for(int i=0;i<npfd;++i){
+      int fd=ev64[i].data.fd;
+      int event_flags=ev64[i].events;
+      if(fd==m_listen||status.find( fd)!=status.end()||fd==done.fd())
+      {
+        
+        addevent(fd, event_flags, event_flags);
+      }  
+      }
+     }
+     break;
+     }
+     int nfds =epoll_wait(epfd, ev64, 256, -1);
       if(nfds<0) //失效了
       {
          if(errno==EINTR)
@@ -190,14 +215,21 @@ bool Epoll::start(int port){
     }
     }
    }
+   while(!status.empty()) onclose(status.begin()->first);
     close(m_listen);
     close(epfd);
+    epfd=-1;
+    m_listen=-1;
+    Logger::Instance().Log(INFO, "优雅退出", "Epoll");
     return true;
 
 }
 Epoll::Epoll() :epoll_poll(4)
 {
+  g_epoll=this;
   signal(SIGPIPE, SIG_IGN);
+  signal(SIGINT,  on_signal);
+  signal(SIGTERM, on_signal);
   m_listen=-1;
   epfd=-1;
  client_len=(sizeof(client_addr));
@@ -211,4 +243,9 @@ Epoll::~Epoll(){
   {
     close(epfd);
   }
+}
+void Epoll::on_signal(int signo){
+ g_epoll->stopping=true;
+ uint64_t one=1;
+ write(g_epoll->done.fd(),&one,8);
 }
