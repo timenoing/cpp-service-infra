@@ -27,6 +27,7 @@ struct Conn{
     int size=0;
     bool check=false;
     bool finished=false;
+    bool connecting=false;
     std::string outbuf;
     net::messagedecode dec;
     std::unordered_map<uint64_t,std::chrono::steady_clock::time_point> pending;
@@ -138,34 +139,94 @@ int main(int argc,char** argv){
     }
     std::unordered_map<int,Conn> cs;
     cs.reserve((size_t)conns);
+    int connect_fail=0;
     for(int i=0;i<conns;++i){
         int fd=socket(AF_INET,SOCK_STREAM,0);
         if(fd<0){
-            perror("socket");
-            return 1;
+            connect_fail++;
+            continue;
         }
+        set_nonblocking(fd);
         sockaddr_in addr{};
         addr.sin_family=AF_INET;
         addr.sin_port=htons((uint16_t)port);
-        inet_pton(AF_INET,"127.0.0.1",&addr.sin_addr);
-        if(connect(fd,(sockaddr*)&addr,sizeof(addr))<0){
-            perror("connect");
-            close(fd);
-            return 1;
-        }
-        set_nonblocking(fd);
-        int one=1;
-        setsockopt(fd,IPPROTO_TCP,TCP_NODELAY,&one,sizeof(one));
+        char ipbuf[16];
+        snprintf(ipbuf,sizeof(ipbuf),"127.0.0.%d",(i%8)+1);
+        inet_pton(AF_INET,ipbuf,&addr.sin_addr);
         Conn c{};
         c.fd=fd;
         c.per_conn=(uint64_t)per_conn;
         c.size=size;
         c.check=check;
+        c.connecting=true;
         cs.emplace(fd,std::move(c));
-        int want=EPOLLIN;
+        if(connect(fd,(sockaddr*)&addr,sizeof(addr))<0&&errno!=EINPROGRESS){
+            perror("connect");
+            epoll_ctl(ep,EPOLL_CTL_DEL,fd,nullptr);
+            close(fd);
+            cs.erase(fd);
+            connect_fail++;
+            continue;
+        }
+        int want=EPOLLOUT;
         set_events(ep,cs.at(fd),want);
-        if(!pump_send(ep,cs.at(fd),(uint64_t)depth)){
-            fprintf(stderr,"initial send failed on conn %d\n",i);
+    }
+
+    size_t connected=0;
+    auto tc0=std::chrono::steady_clock::now();
+    auto connect_deadline=tc0+std::chrono::seconds(120);
+    std::vector<epoll_event> cev(512);
+    while(connected<(size_t)conns){
+        if(std::chrono::steady_clock::now()>connect_deadline){
+            fprintf(stderr,"CONNECT DEADLINE: %zu/%d connected\n",connected,conns);
+            break;
+        }
+        int nfds=epoll_wait(ep,cev.data(),(int)cev.size(),500);
+        if(nfds<0){
+            if(errno==EINTR) continue;
+            perror("epoll_wait");
+            break;
+        }
+        for(int k=0;k<nfds;++k){
+            int fd=cev[k].data.fd;
+            auto it=cs.find(fd);
+            if(it==cs.end()) continue;
+            Conn& c=it->second;
+            uint32_t e=cev[k].events;
+            if(!c.connecting) continue;
+            int soerr=0;
+            socklen_t sl=sizeof(soerr);
+            getsockopt(fd,SOL_SOCKET,SO_ERROR,&soerr,&sl);
+            if((e&(EPOLLERR|EPOLLHUP))||soerr!=0){
+                if(soerr==0&&(e&EPOLLHUP)) soerr=ECONNRESET;
+                fprintf(stderr,"connect failed fd=%d soerr=%d\n",fd,soerr);
+                epoll_ctl(ep,EPOLL_CTL_DEL,fd,nullptr);
+                close(fd);
+                cs.erase(it);
+                connect_fail++;
+                continue;
+            }
+            int one=1;
+            setsockopt(fd,IPPROTO_TCP,TCP_NODELAY,&one,sizeof(one));
+            set_events(ep,c,EPOLLIN);
+            c.connecting=false;
+            connected++;
+        }
+    }
+    double t_connect=std::chrono::duration_cast<std::chrono::duration<double>>(
+        std::chrono::steady_clock::now()-tc0).count();
+    if(connected<(size_t)conns){
+        printf("conns=%d connect_done=%zu connect_fail=%d connect=%.3fs\n",
+               conns,connected,connect_fail,t_connect);
+        printf("FAIL (connect phase incomplete)\n");
+        close(ep);
+        return 1;
+    }
+
+    for(auto& kv : cs){
+        if(!pump_send(ep,kv.second,(uint64_t)depth)){
+            fprintf(stderr,"initial send failed on fd %d\n",kv.first);
+            close(ep);
             return 1;
         }
     }
@@ -285,8 +346,8 @@ int main(int argc,char** argv){
         return (double)lat_us[idx]/1000.0;
     };
 
-    printf("conns=%d msgs=%llu size=%dB depth=%d time=%.3fs\n",
-           conns,(unsigned long long)expected,size,depth,elapsed);
+    printf("conns=%d msgs=%llu size=%dB depth=%d connect=%.3fs time=%.3fs\n",
+           conns,(unsigned long long)expected,size,depth,t_connect,elapsed);
     printf("qps=%.0f p50=%.3fms p90=%.3fms p99=%.3fms p999=%.3fms max=%.3fms\n",
            qps,pct(0.50),pct(0.90),pct(0.99),pct(0.999),
            lat_us.empty()?0.0:(double)lat_us.back()/1000.0);

@@ -62,13 +62,15 @@
 - **教训**：先退款再申请，永远别问自己没有的槽；EMFILE 分支"处理失败"不等于"处理事件"，水平触发的可读不会消失。
 - **多实例注意事项**（多 reactor 实测抓到的回归）：泄洪四步舞"先退款再申请"**单线程自洽**；多 reactor 共享**进程级 fd 表**时会被并发打断——A 退的槽被 B 的 accept 抢走 → A 的 `open` 撞满载失败 → idle_fd=-1 永久丢失 → 此后"close(-1)无效、accept 失败、open 失败"零进展空转（实测 n=2 双实例 CPU 149%→166% 饱和）。修法：`g_mutex` 进程级互斥包住四步（锁仅覆盖 EMFILE 罕见路径，正常 accept 零开销）。修复后 n=2 双实例 fd 打满 CPU **0.0%**。fd 表是进程级共享资源，任何"预留 fd"技法在多线程下都需要原子化。
 
-## 7. g_epoll 头文件 static——每个编译单元一份副本 【欠账】
+## 7. g_epoll 头文件 static——每个编译单元一份副本 【已修，见 feat 提交】
 
 - **是什么**：`static Epoll* g_epoll` 写在头文件，每个 include 它的 .cpp 各有一份 nullptr 副本。
 - **在哪**：include/Epoll.h 文件尾部。
 - **为什么能跑**：on_signal 定义在 Epoll.cpp，读的是本 TU 那份被构造函数赋值的副本。单实例 + 单 TU 现状下安全。
 - **风险**：任何其他 TU 读 g_epoll 都是 nullptr；多 Epoll 实例时信号路由错误。
-- **修法候选**：改为非 static 定义于 Epoll.cpp + 头文件 extern 声明；多实例则需信号→实例注册表。
+- **怎么修**：升级为注册表——`static std::vector<Epoll*> g_instance`（Epoll.cpp 文件级，全程序唯一），构造 `push_back(this)` 登记、析构 `find+erase` 注销，on_signal 遍历注册表**逐实例 stopping+按铃**（每个 reactor 只听自己 done.fd() 的铃声，缺一不可）。头文件死副本删除。
+- **衍生雷（多 reactor 实测段错误）**：注册表是 vector，**多线程并发构造**时 push_back 竞态 → 堆损坏，服务器启动即段错误（首次 50K 压测抓到，此前双实例多次启动未触发=典型竞态）。修法：主线程**顺序构造** `std::vector<std::unique_ptr<Epoll>>`（unique_ptr 指针稳定，登记的 this 永不失效），线程只跑 `start()`，对象生命周期跨 join——注册表变更全程单线程，竞态从根上消失。
+- **教训**：注册表类全局结构的写操作必须单线程化或加锁；"构造放线程里"看起来优雅，实际把登记变成了并发写。
 
 ## 8. 优雅退出 deadline 只管 epoll 层，进程退出可超 deadline 【已修，见 fix 提交】
 
@@ -102,6 +104,7 @@
 - **服务器侧 connect 语义**：backlog 未溢出时，客户端 blocking connect 在 SYN 队列即可返回，"connect 成功"≠"server 已 accept"。
 - **pkill 自杀案**：`pkill -f` 的模式串若出现在 ssh 命令行里（如 `pkill -f test_client`），会匹配到自己的 bash -c 进程把会话杀掉，表现为命令"无输出"。pkill 只准写在脚本文件内部。
 - **海森 bug 与观察成本**：竞态窗口窄到任何观察手段（strace、逐块 memcpy 落盘）都会挪动时序躲开它。取证仪器必须零成本、只在失败分支动手（正常路径一条指令不多加），否则永远抓不到现行。
+- **C10K 压测的 ephemeral 端口天花板**：单源 IP 对单目标的连接上限 = `ip_local_port_range` 大小（本机 32768-60999 = 28232 个），5 万连接必撞，失败数精确等于超配额数。免 root 解法：目标 IP 轮换——整段 127.0.0.0/8 都是回环（127.0.0.1~8 ×8 ≈22 万上限），服务端 INADDR_ANY 天然全收。ulimit 也要在连接数上留余量：server 侧=连接数+基础 fd，差一个就 EMFILE 泄洪误拒。
 
 ---
 
