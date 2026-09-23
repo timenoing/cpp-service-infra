@@ -24,6 +24,7 @@
 #include <time.h>
 #include <csignal>
 #include <netinet/tcp.h>
+#include<fcntl.h>
 class Epoll{
     public:
     Epoll(); 
@@ -34,6 +35,7 @@ class Epoll{
     Donequeue done;
     ThreadPool epoll_poll;//线程池
     std::atomic<bool> stopping=false;
+    int idle_fd;
     int  set_nonblocking(int fd);//阻塞函数
     int  create_fd(int a); //套接字函数，a为端口号
     void addevent(int fd, int event,int cancelevent);

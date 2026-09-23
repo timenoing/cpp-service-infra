@@ -18,7 +18,11 @@ void Epoll::onaccept(int fd)
       {
         return ;
       }else if (errno == EMFILE || errno == ENFILE){
-          return ;
+        close(idle_fd);
+        int client=accept(m_listen,(struct sockaddr*)&client_addr, (socklen_t *)&client_len);
+        close(client);
+        idle_fd=open("/dev/null", O_RDONLY);
+      return; 
       }else{ //以后分配到线程池的任务
        return;
       }
@@ -234,6 +238,7 @@ Epoll::Epoll() :epoll_poll(4)
   signal(SIGTERM, on_signal);
   m_listen=-1;
   epfd=-1;
+  idle_fd= open("/dev/null", O_RDONLY);
  client_len=(sizeof(client_addr));
 }
 Epoll::~Epoll(){
