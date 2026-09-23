@@ -1,6 +1,7 @@
 #include <asm-generic/errno-base.h>
 #include <cstddef>
 #include <cstdio>
+#include <fstream>
 #include<sys/socket.h>
 #include<sys/epoll.h>
 #include<fcntl.h>
@@ -167,7 +168,23 @@ int regression(int fd,int total)
         std::cout<<" sample_lost_len="<<only_sent.front().size();
       if(!only_got.empty())
         std::cout<<" sample_extra_len="<<only_got.front().size();
+      std::cout<<" got_frames="<<got.size();
       std::cout<<std::endl;
+      {
+        std::ofstream sf("/tmp/tc_sent_frames.bin", std::ios::binary);
+        for(size_t i=0;i<sent.size();++i){
+          uint32_t l=(uint32_t)sent[i].size();
+          sf.write(reinterpret_cast<char*>(&l),4);
+          sf.write(sent[i].data(), sent[i].size());
+        }
+        std::ofstream gf("/tmp/tc_got_frames.bin", std::ios::binary);
+        for(size_t i=0;i<got.size();++i){
+          uint32_t l=(uint32_t)got[i].size();
+          gf.write(reinterpret_cast<char*>(&l),4);
+          gf.write(got[i].data(), got[i].size());
+        }
+        std::cout<<"DUMPED frames sent="<<sent.size()<<" got="<<got.size()<<std::endl;
+      }
     }
     done+=n;
   }
