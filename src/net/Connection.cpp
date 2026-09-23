@@ -2,11 +2,9 @@
 net::Connection::Connection(int epfd,int fd,uint64_t conn_id,ThreadPool* poll,Donequeue* done,std::function<std::string (const std::string&)> handler)
   :epfd(epfd),fd(fd),handler(handler),pool(poll),conn_id(conn_id),done(done)
 {
-   
 }
 net::Connection::~Connection()
 {
-
 }
 bool  net::Connection::handreadable(){
      char buf[1024*64];
@@ -89,25 +87,28 @@ ssize_t n=0;
 }
 bool net::Connection::senddata(const std::string& accept)
 {
- std::string data= net::encode(accept);
-int achieve=send(fd,data.data(),data.size(),0);
-       if(achieve<data.size())
-    {
-      if(achieve==-1 )
-      {
-      if (errno == EAGAIN||errno == EWOULDBLOCK ||errno == EINTR ){
-        status.Outbuffer.insert(status.Outbuffer.end(),data.begin(),data.end());
-      set_event(EPOLLIN |EPOLLOUT);
-      return true;
-      }
-      closed=true;
-      return false;
-      }else{
-        status.Outbuffer.insert(status.Outbuffer.end(),data.begin()+achieve,data.end());
-        set_event( EPOLLIN |EPOLLOUT);
-      }
-    }
+ std::string data = net::encode(accept);
+  if(!status.Outbuffer.empty()) 
+  {
+    status.Outbuffer.insert(status.Outbuffer.end(), data.begin(), data.end());
+    set_event(EPOLLIN|EPOLLOUT);
     return true;
+  }
+  int achieve = send(fd, data.data(), data.size(), 0);
+  if(achieve == (int)data.size()) return true;
+  if(achieve == -1){
+    if(errno==EAGAIN||errno==EWOULDBLOCK){
+      status.Outbuffer.insert(status.Outbuffer.end(), data.begin(), data.end());
+      set_event(EPOLLIN|EPOLLOUT);
+      return true;
+    }
+    if(errno==EINTR) return senddata(accept);
+    closed = true;
+    return false;
+  }
+  status.Outbuffer.insert(status.Outbuffer.end(), data.begin()+achieve, data.end());
+  set_event(EPOLLIN|EPOLLOUT);
+  return true;
 }
 void net::Connection::set_event(uint32_t event)
 {
