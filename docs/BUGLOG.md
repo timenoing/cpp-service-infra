@@ -60,6 +60,7 @@
 - **怎么修**：预留 fd 泄洪——构造时 `idle_fd=open("/dev/null")` 占位；accept 撞 EMFILE/ENFILE 时：`close(idle_fd)` 腾槽 → `accept()` 拿一个真连接 → **立即 `close(client)` 拒绝**（泄洪本体）→ 重开 `/dev/null` 占位归还槽。单线程保证 close 与 open 之间无第三方抢槽，重开必成。
 - **怎么验**：ulimit 60 + 200 空连接：CPU 83% 空转 → **0.1%、TIME 零增长、STAT=Sl**。
 - **教训**：先退款再申请，永远别问自己没有的槽；EMFILE 分支"处理失败"不等于"处理事件"，水平触发的可读不会消失。
+- **多实例注意事项**（多 reactor 实测抓到的回归）：泄洪四步舞"先退款再申请"**单线程自洽**；多 reactor 共享**进程级 fd 表**时会被并发打断——A 退的槽被 B 的 accept 抢走 → A 的 `open` 撞满载失败 → idle_fd=-1 永久丢失 → 此后"close(-1)无效、accept 失败、open 失败"零进展空转（实测 n=2 双实例 CPU 149%→166% 饱和）。修法：`g_mutex` 进程级互斥包住四步（锁仅覆盖 EMFILE 罕见路径，正常 accept 零开销）。修复后 n=2 双实例 fd 打满 CPU **0.0%**。fd 表是进程级共享资源，任何"预留 fd"技法在多线程下都需要原子化。
 
 ## 7. g_epoll 头文件 static——每个编译单元一份副本 【欠账】
 

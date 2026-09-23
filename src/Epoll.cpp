@@ -2,6 +2,8 @@
 #include "ThreadPool.h"
 #include <unistd.h>
 #include <vector>
+static std::vector<Epoll*>g_instance;
+static std::mutex g_mutex;
 void Epoll::set_handler(std::function<std::string (const std::string &)> messge_handler)
 {
   message_handler=messge_handler;
@@ -18,11 +20,12 @@ void Epoll::onaccept(int fd)
       {
         return ;
       }else if (errno == EMFILE || errno == ENFILE){
+        std::lock_guard<std::mutex> lock(g_mutex);
         close(idle_fd);
         int client=accept(m_listen,(struct sockaddr*)&client_addr, (socklen_t *)&client_len);
         close(client);
         idle_fd=open("/dev/null", O_RDONLY);
-      return; 
+        return;
       }else{ //以后分配到线程池的任务
        return;
       }
@@ -93,12 +96,13 @@ int Epoll::create_fd(int a){ //放在那个端口上
     if (setsockopt(mlisten, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
         perror("setsockopt SO_REUSEADDR"); // 打印但不要返回，不影响主要功能
     }
+    setsockopt(mlisten, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
     if(bind(mlisten, (struct sockaddr*)&addr,sizeof(addr))<0)
     {
       close(mlisten);
     return -1;
     }
-    if(listen(mlisten, 1024)<0)
+    if(listen(mlisten, 8192)<0)
     {
         close(mlisten);
         return -1;
@@ -232,7 +236,7 @@ bool Epoll::start(int port){
 }
 Epoll::Epoll() :epoll_poll(4)
 {
-  g_epoll=this;
+  g_instance.push_back(this);
   signal(SIGPIPE, SIG_IGN);
   signal(SIGINT,  on_signal);
   signal(SIGTERM, on_signal);
@@ -250,9 +254,15 @@ Epoll::~Epoll(){
   {
     close(epfd);
   }
+ auto it = std::find(g_instance.begin(), g_instance.end(), this);
+if (it != g_instance.end()) {
+    g_instance.erase(it); 
+}
 }
 void Epoll::on_signal(int signo){
- g_epoll->stopping=true;
- uint64_t one=1;
- write(g_epoll->done.fd(),&one,8);
+   uint64_t one=1;
+ for(auto* g: g_instance){
+  g->stopping=true;
+ write(g->done.fd(),&one,8);
+ }
 }

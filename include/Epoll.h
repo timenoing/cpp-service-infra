@@ -54,5 +54,4 @@ class Epoll{
     std::function<std::string (const std::string&)> message_handler;
     uint64_t conn_id=0;
 };
-static Epoll* g_epoll=nullptr;
 #endif
