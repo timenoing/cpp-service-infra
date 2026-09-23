@@ -14,7 +14,7 @@ void ThreadPool::workerLoop()
     {
     std::unique_lock<std::mutex> lock(mut);
     cv.wait(lock,[this] {return !tasks.empty()||stopping;});
-    if (stopping && tasks.empty())
+    if (stopping)
     return;
     task = std::move(tasks.front());
     tasks.pop();
@@ -44,5 +44,6 @@ void ThreadPool::submit(std::function<void()> task)
     tasks.push(std::move(task));
     }
     cv.notify_one();
-    
+
 }
+

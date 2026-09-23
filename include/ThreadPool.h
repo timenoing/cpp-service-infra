@@ -16,7 +16,6 @@ class ThreadPool
       ~ThreadPool();//析构
       ThreadPool(const ThreadPool&) = delete;
       ThreadPool& operator=(const ThreadPool&) = delete;
-
     private:
      void workerLoop(); //循环函数
      std::vector <std::thread> threads;
