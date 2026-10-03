@@ -24,15 +24,23 @@ set(COMMON_SRC
     src/Trace.cpp
     src/Message.cpp
     src/net/Connection.cpp
+    src/Commit_log.cpp
 )
 
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
 add_executable(server 9.2main.cpp ${COMMON_SRC})
 find_package(SQLite3 REQUIRED)
-target_link_libraries(server PRIVATE SQLite::SQLite3)
+find_package(ZLIB REQUIRED)
+target_link_libraries(server PRIVATE SQLite::SQLite3 ZLIB::ZLIB)
 
 add_executable(message_test test/message_test.cpp src/Message.cpp)
 
 add_executable(test_client src/test_client.cpp src/Message.cpp)
 
 add_executable(bench_client src/bench_client.cpp src/Message.cpp)
+
+add_executable(commit_test test/commit_test.cpp src/Commit_log.cpp)
+target_link_libraries(commit_test PRIVATE ZLIB::ZLIB)
+
+add_executable(segment_test test/segment_test.cpp src/Segment.cpp)
+target_link_libraries(segment_test PRIVATE ZLIB::ZLIB)
