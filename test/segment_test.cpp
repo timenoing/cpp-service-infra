@@ -32,6 +32,8 @@ static const char* P4 = "/tmp/mlog_sg_4.seg";
 static const char* P5 = "/tmp/mlog_sg_5.seg";
 static const char* P6 = "/tmp/mlog_sg_6.seg";
 static const char* P7 = "/tmp/mlog_sg_7.seg";
+static const char* P8 = "/tmp/mlog_sg_8.seg";
+static const char* P9 = "/tmp/mlog_sg_9.seg";
 
 static void remove_file(const char* p) { ::unlink(p); }
 
@@ -72,20 +74,23 @@ static uint64_t be64(const uint8_t* p) {
 }
 
 // ---------- 帧构造器（独立 oracle：自带打包与同链 CRC，不引 Segment 的 static 助手） ----------
-// 标准 16+len 帧：offset@0 u64 + len@8 u32 + crc@12（覆盖 len 4B + payload，不含 offset）
-static std::string build_frame(uint64_t offset, const std::string& payload) {
-  std::string f(16 + payload.size(), 0);
+// [v1.2 ADR-003] 标准 20+len 帧：offset@0 u64 + len@8 u32 + epoch@12 u32 + crc@16
+// （CRC 覆盖 len 4B + epoch 4B + payload，不含 offset）
+static std::string build_frame(uint64_t offset, uint32_t epoch, const std::string& payload) {
+  std::string f(20 + payload.size(), 0);
   uint64_t o = offset;
   for (int i = 7; i >= 0; i--) { f[i] = uint8_t(o & 0xFF); o >>= 8; }
   uint32_t len = (uint32_t)payload.size();
   f[8]  = (len >> 24) & 0xFF; f[9]  = (len >> 16) & 0xFF;
   f[10] = (len >> 8)  & 0xFF; f[11] =  len        & 0xFF;
+  f[12] = (epoch >> 24) & 0xFF; f[13] = (epoch >> 16) & 0xFF;
+  f[14] = (epoch >> 8)  & 0xFF; f[15] =  epoch       & 0xFF;
   uLong crc = crc32(0L, Z_NULL, 0);
-  crc = crc32(crc, (const uint8_t*)f.data() + 8, 4);
+  crc = crc32(crc, (const uint8_t*)f.data() + 8, 8);
   if (len) crc = crc32(crc, (const uint8_t*)payload.data(), len);
-  f[12] = (crc >> 24) & 0xFF; f[13] = (crc >> 16) & 0xFF;
-  f[14] = (crc >> 8)  & 0xFF; f[15] =  crc        & 0xFF;
-  f.replace(16, payload.size(), payload);
+  f[16] = (crc >> 24) & 0xFF; f[17] = (crc >> 16) & 0xFF;
+  f[18] = (crc >> 8)  & 0xFF; f[19] =  crc        & 0xFF;
+  f.replace(20, payload.size(), payload);
   return f;
 }
 
@@ -103,46 +108,59 @@ static bool corrupt_flip(const char* p, uint64_t pos) {
   d[pos] ^= 0x01;
   return write_file(p, d);
 }
-// frame_pos = 帧起始字节位（含 16B 头）；len 字段在 frame_pos+8 起 4B
+// frame_pos = 帧起始字节位（含 20B 头 [v1.2]）；len 字段在 frame_pos+8 起 4B，epoch 在 +12
 static bool corrupt_setlen(const char* p, uint64_t frame_pos, uint32_t new_len) {
   std::string d;
-  if (!read_file(p, d) || frame_pos + 12 > d.size()) return false;
+  if (!read_file(p, d) || frame_pos + 20 > d.size()) return false;
   d[frame_pos + 8]  = uint8_t(new_len >> 24);
   d[frame_pos + 9]  = uint8_t(new_len >> 16);
   d[frame_pos + 10] = uint8_t(new_len >> 8);
   d[frame_pos + 11] = uint8_t(new_len);
   return write_file(p, d);
 }
+// [v1.2] 错 epoch 注入：把 frame_pos+12 起 4B 的 epoch 改成 new_epoch
+static bool corrupt_setepoch(const char* p, uint64_t frame_pos, uint32_t new_epoch) {
+  std::string d;
+  if (!read_file(p, d) || frame_pos + 20 > d.size()) return false;
+  d[frame_pos + 12] = uint8_t(new_epoch >> 24);
+  d[frame_pos + 13] = uint8_t(new_epoch >> 16);
+  d[frame_pos + 14] = uint8_t(new_epoch >> 8);
+  d[frame_pos + 15] = uint8_t(new_epoch);
+  return write_file(p, d);
+}
 
 // ---------- 读回器（独立 oracle：扫帧 + 停靠判定） ----------
-struct RFrame { uint64_t offset; uint32_t len; std::string payload; };
+struct RFrame { uint64_t offset; uint32_t len; uint32_t epoch; std::string payload; };
 enum class RStop { eof, torn, corrupt };
 // start_pos 通常 32（跳段头）；扫到首个非合法点即停，out 只收停靠前的合法帧。
-// 连续性 oracle：第 2 帧起 offset 必须 == 前帧+1，违则 corrupt（对应判据⑤文件侧）。
+// 连续性 oracle：第 2 帧起 offset 必须 == 前帧+1、epoch 必须 ≥ 前帧 [v1.2 §2.4]，违则 corrupt。
 static RStop readback(const char* p, uint64_t start_pos, std::vector<RFrame>& out) {
   std::string d;
   if (!read_file(p, d)) return RStop::torn;
   out.clear();
   uint64_t pos = start_pos;
   while (true) {
-    if (pos + 16 > d.size())
+    if (pos + 20 > d.size())
       return pos == d.size() ? RStop::eof : RStop::torn;
     uint32_t len = be32((const uint8_t*)d.data() + pos + 8);
     if (len > 1024u * 1024) return RStop::corrupt;
-    if (pos + 16 + len > d.size()) return RStop::torn;
+    if (pos + 20 + len > d.size()) return RStop::torn;
     uLong crc = crc32(0L, Z_NULL, 0);
-    crc = crc32(crc, (const uint8_t*)d.data() + pos + 8, 4);
-    if (len) crc = crc32(crc, (const uint8_t*)d.data() + pos + 16, len);
-    if ((uint32_t)crc != be32((const uint8_t*)d.data() + pos + 12))
+    crc = crc32(crc, (const uint8_t*)d.data() + pos + 8, 8);
+    if (len) crc = crc32(crc, (const uint8_t*)d.data() + pos + 20, len);
+    if ((uint32_t)crc != be32((const uint8_t*)d.data() + pos + 16))
       return RStop::corrupt;
     if (!out.empty() && be64((const uint8_t*)d.data() + pos) != out.back().offset + 1)
       return RStop::corrupt;
+    if (!out.empty() && be32((const uint8_t*)d.data() + pos + 12) < out.back().epoch)
+      return RStop::corrupt;                       // [v1.2] epoch 倒退
     RFrame f;
     f.offset = be64((const uint8_t*)d.data() + pos);
     f.len = len;
-    f.payload = d.substr(pos + 16, len);
+    f.epoch = be32((const uint8_t*)d.data() + pos + 12);
+    f.payload = d.substr(pos + 20, len);
     out.push_back(f);
-    pos += 16 + len;
+    pos += 20 + len;
   }
 }
 
@@ -155,15 +173,16 @@ int main() {
   // ---------------------------------------------------------------------------
   {
     remove_file(P0);
-    std::string f = build_frame(7, "abc");
-    CHECK(f.size() == 19);                                   // 16 头 + 3 payload
+    std::string f = build_frame(7, 3, "abc");
+    CHECK(f.size() == 23);                                   // [v1.2] 20 头 + 3 payload
     CHECK(write_file(P0, f));
     std::vector<RFrame> out;
     CHECK(readback(P0, 0, out) == RStop::eof);               // 整帧完好 → eof
-    CHECK(out.size() == 1 && out[0].offset == 7 && out[0].len == 3 && out[0].payload == "abc");
-    CHECK(corrupt_flip(P0, 12));                             // 翻 CRC 首字节
+    CHECK(out.size() == 1 && out[0].offset == 7 && out[0].len == 3 &&
+          out[0].epoch == 3 && out[0].payload == "abc");
+    CHECK(corrupt_flip(P0, 16));                             // 翻 CRC 首字节
     CHECK(readback(P0, 0, out) == RStop::corrupt);           // 位翻转必破 CRC
-    CHECK(corrupt_setlen(P0, 0, 5));                         // len→5，19B < 16+5 → torn
+    CHECK(corrupt_setlen(P0, 0, 5));                         // len→5，23B < 20+5 → torn
     CHECK(corrupt_truncate(P0, 10));                         // 截到 10B
     CHECK(readback(P0, 0, out) == RStop::torn);              // 16B 头都凑不齐
   }
@@ -212,11 +231,11 @@ int main() {
     const std::string p64k(64 * 1024, 'a');                  // 64KiB
     const std::string p1m(1024 * 1024, 'b');                 // 1MiB 满帧（合法上界）
     const std::string p47(47, 'c');                          // 常规值
-    CHECK(s->append(p0,   0));                               // 帧 offset 连号 base+0..4
-    CHECK(s->append(p1,   1));
-    CHECK(s->append(p64k, 2));
-    CHECK(s->append(p1m,  3));
-    CHECK(s->append(p47,  4));
+    CHECK(s->append(p0,   0, 1));                            // 帧 offset 连号 base+0..4；epoch 恒 1（v0.8 单机）
+    CHECK(s->append(p1,   1, 1));
+    CHECK(s->append(p64k, 2, 1));
+    CHECK(s->append(p1m,  3, 1));
+    CHECK(s->append(p47,  4, 1));
     CHECK(s->sysnc());                                       // fdatasync 收尾（EINTR 重试语义）
     delete s;
     std::vector<RFrame> out;
@@ -240,12 +259,12 @@ int main() {
     remove_file(P3);
     Segment* s = new Segment(P3);
     CHECK(s->creat());
-    CHECK(s->append(std::string(40, 'a'), 0));               // 帧0 = 32..(16+40)
-    CHECK(s->append(std::string(30, 'b'), 1));               // 帧1 起点 = 32+56=88
-    CHECK(s->append(std::string(20, 'c'), 2));
+    CHECK(s->append(std::string(40, 'a'), 0, 1));            // [v1.2] 帧0 = 32..(20+40)
+    CHECK(s->append(std::string(30, 'b'), 1, 1));            // [v1.2] 帧1 起点 = 32+60=92
+    CHECK(s->append(std::string(20, 'c'), 2, 1));
     delete s;
-    uint64_t f0_end = 32 + 16 + 40;                          // 帧0 末 = 帧1 头
-    CHECK(corrupt_truncate(P3, f0_end + 16 + 15));           // 帧1 payload 只剩 15B（半条）
+    uint64_t f0_end = 32 + FRAME_HEAD + 40;                  // 帧0 末 = 帧1 头
+    CHECK(corrupt_truncate(P3, f0_end + FRAME_HEAD + 15));   // 帧1 payload 只剩 15B（半条）
     std::vector<RFrame> out;
     CHECK(readback(P3, 32, out) == RStop::torn);
     CHECK(out.size() == 1 && out[0].offset == 0 && out[0].len == 40 &&
@@ -253,7 +272,7 @@ int main() {
     std::string d;
     CHECK(read_file(P3, d));
     Framecheck cf = check_frame((const uint8_t*)d.data() + f0_end,
-                                d.size() - f0_end, 1);     // 帧1 半条，期望 offset=1
+                                d.size() - f0_end, 1, 1);  // [v1.2] 帧1 半条，期望 offset=1，prev epoch=1
     CHECK(cf.kind == Framecheck::torn);                    // 内存侧同判 torn
     CHECK(cf.torn_len == (off_t)(d.size() - f0_end));      // torn_len == avail 口径
     remove_file(P3);
@@ -269,7 +288,7 @@ int main() {
     remove_file(P4);
     Segment* s = new Segment(P4);
     CHECK(s->creat());
-    CHECK(s->append(std::string(50, 'x'), 0));
+    CHECK(s->append(std::string(50, 'x'), 0, 1));
     delete s;
     CHECK(corrupt_setlen(P4, 32, 1024 * 1024 + 1));          // len = 1MiB+1
     std::vector<RFrame> out;
@@ -278,7 +297,7 @@ int main() {
     std::string d;
     CHECK(read_file(P4, d));
     Framecheck cf = check_frame((const uint8_t*)d.data() + 32,
-                                d.size() - 32, 0);
+                                d.size() - 32, 0, 1);
     CHECK(cf.kind == Framecheck::corrupt);                   // 判定函数同裁
     remove_file(P4);
   }
@@ -293,17 +312,17 @@ int main() {
     remove_file(P5);
     Segment* s = new Segment(P5);
     CHECK(s->creat());
-    CHECK(s->append(std::string(10, 'a'), 0));               // 帧0：offset 0（base=0）
+    CHECK(s->append(std::string(10, 'a'), 0, 1));            // 帧0：offset 0（base=0）
     delete s;
     std::string all;
     CHECK(read_file(P5, all));
-    all += build_frame(0, std::string(10, 'x'));             // 手拼帧：offset 又是 0（应为 1）
+    all += build_frame(0, 1, std::string(10, 'x'));          // 手拼帧：offset 又是 0（应为 1）
     CHECK(write_file(P5, all));                              // 文件重构（段头+帧0+冒名帧0）
     std::vector<RFrame> out;
     CHECK(readback(P5, 32, out) == RStop::corrupt);
     CHECK(out.size() == 1);                                  // 帧0 合法，停靠在冒名帧
-    Framecheck cf = check_frame((const uint8_t*)build_frame(0, std::string(10, 'x')).data(),
-                                16 + 10, 1);                 // 期望 1，实际 0
+    Framecheck cf = check_frame((const uint8_t*)build_frame(0, 1, std::string(10, 'x')).data(),
+                                20 + 10, 1, 1);              // [v1.2] 期望 1，实际 0
     CHECK(cf.kind == Framecheck::corrupt);
     // 注：len 通道契约=仅 valid 分支填写；corrupt 分支不填（见块 8 遗留清单：
     //   Framecheck 建议改为值初始化，防出参字段带脏值随机翻车）。
@@ -355,11 +374,57 @@ int main() {
     CHECK(out.empty());                                      // 0 帧
     Segment* r = new Segment(P7);
     CHECK(r->open_append());                                 // 空段合法可开
-    CHECK(r->append(std::string(33, 'z'), 0));               // 首帧 offset = base_offset+0
+    CHECK(r->append(std::string(33, 'z'), 0, 1));            // 首帧 offset = base_offset+0
     delete r;
     CHECK(readback(P7, 32, out) == RStop::eof);              // 续写后帧可读回
     CHECK(out.size() == 1 && out[0].offset == 0 && out[0].len == 33);
     remove_file(P7);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 判据⑧ [v1.2 ADR-003] epoch 单调不减合法：1,1,2 → 全 valid，readback 逐帧记 epoch
+  // 为什么允许 ==：同一 leader epoch 窗口内连续写多帧是常态（不是每帧换 leader）
+  // ---------------------------------------------------------------------------
+  {
+    remove_file(P8);
+    Segment* s = new Segment(P8);
+    CHECK(s->creat());
+    CHECK(s->append(std::string(6, 'a'), 0, 1));
+    CHECK(s->append(std::string(6, 'b'), 1, 1));             // epoch 同值（合法）
+    CHECK(s->append(std::string(6, 'c'), 2, 2));             // epoch 升（合法）
+    delete s;
+    std::vector<RFrame> out;
+    CHECK(readback(P8, 32, out) == RStop::eof);
+    CHECK(out.size() == 3);
+    CHECK(out[0].epoch == 1 && out[1].epoch == 1 && out[2].epoch == 2); // epoch 逐帧对上
+    remove_file(P8);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 判据⑨ [v1.2 ADR-003] epoch 倒退 → corrupt
+  // 注入器只改 epoch 字段 → CRC 已破 → 这测不出"epoch 独立判据"；
+  //   所以白盒直接调 check_frame（epoch=0 < prev=1，其余全好）：
+  //   与判据⑤同款形态——单独证一条判据在场，防被 CRC 掩盖。
+  // 文件侧用 corrupt_setepoch 后 readback 也会 corrupt（但 CRC 同坏，两因合一）
+  // ---------------------------------------------------------------------------
+  {
+    std::string f1 = build_frame(0, 2, std::string(5, 'a'));
+    std::string f2 = build_frame(1, 1, std::string(5, 'b')); // epoch 1 < 前帧 2 → 应 corruption
+    std::string two = f1 + f2;
+    Framecheck cf = check_frame((const uint8_t*)f2.data(), f2.size(), 1, 2);
+    CHECK(cf.kind == Framecheck::corrupt);                   // 内存侧：epoch 倒退直接裁 corrupt
+    (void)two;
+  }
+  {
+    remove_file(P9);
+    Segment* s = new Segment(P9);
+    CHECK(s->creat());
+    CHECK(s->append(std::string(5, 'a'), 0, 2));             // 帧0 epoch=2
+    delete s;
+    CHECK(corrupt_setepoch(P9, 32, 1));                      // 帧0 epoch 改 1（倒退）
+    std::vector<RFrame> out;
+    CHECK(readback(P9, 32, out) == RStop::corrupt);          // 文件侧 corrupt（CRC/epoch 同坏）
+    remove_file(P9);
   }
 
   std::printf("segment_test: all green\n");

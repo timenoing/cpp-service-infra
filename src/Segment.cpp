@@ -87,16 +87,18 @@ static void write_seghead_bg(uint8_t* buf, uint32_t version,
   crc = crc32(crc, buf, 28);
   write_u32_be(buf + 28, (uint32_t)crc);
 }
-// 帧头 16B：offset@0 u64 + len@8 u32 + CRC@12（覆盖 len 的 4B + payload，不含 offset）
+// 帧头 20B [v1.2 ADR-003]：offset@0 u64 + len@8 u32 + epoch@12 u32 + CRC@16
+// CRC 覆盖 len(4B) + epoch(4B) + payload，不含 offset
 static void write_frame_bg(uint8_t* buf, uint64_t offset,
-                           const std::string& payload) {
+                           uint32_t epoch, const std::string& payload) {
   uint32_t len = (uint32_t)payload.size();
   write_u64_be(buf, offset);
   write_u32_be(buf + 8, len);
+  write_u32_be(buf + 12, epoch);
   uLong crc = crc32(0L, Z_NULL, 0);
-  crc = crc32(crc, buf + 8, 4);
+  crc = crc32(crc, buf + 8, 8);
   if (len) crc = crc32(crc, (const uint8_t*)payload.data(), len);
-  write_u32_be(buf + 12, (uint32_t)crc);
+  write_u32_be(buf + 16, (uint32_t)crc);
 }
 // 验段头：magic + version==1 + CRC 三刀；过刀吐 base_offset/walltime 给 open_append 入库
 static bool compare_magic_crc(const uint8_t* buf,
@@ -135,16 +137,18 @@ bool Segment::open_append(){
  offset=st.st_size;
  return true;
 }
-bool Segment::append(const std::string& resp,uint64_t byte_off){
-  uint8_t buf[16];
+bool Segment::append(const std::string& resp,uint64_t byte_off,uint32_t epoch){
+  uint8_t buf[FRAME_HEAD];
   std::string payload =std::move(resp);
   ssize_t len=payload.size();
   if(len>net::messagemaxlen) return false;
-  write_frame_bg(buf, byte_off, payload);
- if(write_len(buf, 16)) {
+  if(epoch < last_epoch) return false;      // 段内 epoch 单调不减 [v1.2 §2.3]
+  write_frame_bg(buf, byte_off, epoch, payload);
+ if(write_len(buf, FRAME_HEAD)) {
   if(write_len(payload.c_str(), len)){
+  last_epoch=epoch;
   return true;
-  } else{ offset-=16;  ftruncate(fd, offset); return false;}
+  } else{ offset-=FRAME_HEAD;  ftruncate(fd, offset); return false;}
   }else{return false; }
 }
 bool Segment::sysnc(){
@@ -155,16 +159,20 @@ bool Segment::sysnc(){
     }else{ return true;}
    }
 }
-Framecheck  check_frame(const uint8_t* header16,size_t avail,uint64_t expected_offset){
+// 合法性判定 [v1.2 §2.4] 四判据按序：len≤1MiB → offset==期望 → epoch≥prev_epoch → CRC → 剩余≥20+len
+// avail：header 起可用总字节数（含 20B 帧头）
+Framecheck  check_frame(const uint8_t* header16,size_t avail,uint64_t expected_offset,uint32_t prev_epoch){
   Framecheck check;
   if(read_crc_big(header16+8)>net::messagemaxlen){check.kind=Framecheck::corrupt; return check; }
   uint32_t len= read_crc_big(header16+8);
-   if(avail<len+16) {check.kind=Framecheck::torn;check.torn_len=avail; return check;}
+  uint32_t epoch= read_crc_big(header16+12);
+  if(epoch<prev_epoch){check.kind=Framecheck::corrupt; return check;}      // epoch 倒退=损坏
+   if(avail<len+FRAME_HEAD) {check.kind=Framecheck::torn;check.torn_len=avail; return check;}
   uLong crc = crc32(0L, Z_NULL, 0);
-  crc = crc32(crc,  header16+8, 4);
-  crc = crc32(crc, header16+16, len);
-  if(crc!=read_crc_big(header16+12)){check.kind=Framecheck::corrupt; return check;}
+  crc = crc32(crc,  header16+8, 8);
+  crc = crc32(crc, header16+FRAME_HEAD, len);
+  if(crc!=read_crc_big(header16+16)){check.kind=Framecheck::corrupt; return check;}
   if(read_u64_be(header16)!=expected_offset){check.kind=Framecheck::corrupt; return check;}
   else {check.kind=Framecheck::valid; check.len=len; return check;}
-  
+
 }
