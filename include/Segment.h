@@ -14,13 +14,21 @@
   enum kind{valid,torn,corrupt} kind;
   uint32_t len=0;
   off_t torn_len=0;
+  uint32_t epoch=0;
+  uint8_t corrupt_at=0;
 };
+enum CorruptAt{at_len, at_offset, at_epoch, at_crc};
 // avail 契约：header16 起可用总字节数（含 20B 帧头）；torn ⇔ avail < 20+len，torn_len 记 avail
 // prev_epoch 待改：合法帧须 epoch ≥ prev_epoch（单调不减）；首帧 prev_epoch 传 0
 Framecheck check_frame(const uint8_t* header16,
                        size_t avail,
                        uint64_t expected_offset,
                        uint32_t prev_epoch);
+bool compare_magic_crc(const uint8_t* buf,
+                              uint64_t* base_offset, uint64_t* walltime);
+uint64_t now_millis();
+uint64_t read_u64_be(const uint8_t* p);
+uint32_t read_crc_big(const uint8_t* p);
 class Segment{
   public:
   Segment(std::string path);

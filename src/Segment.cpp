@@ -36,7 +36,7 @@ bool Segment:: write_len(const char* buf,ssize_t len){
     return true;
   }
 }
-static uint64_t now_millis() {
+ uint64_t now_millis() {
     using namespace std::chrono;
     return static_cast<uint64_t>(
         duration_cast<milliseconds>(
@@ -44,13 +44,14 @@ static uint64_t now_millis() {
         ).count()
     );
 }
-static uint32_t read_crc_big(const uint8_t* p) {
+ uint32_t read_crc_big(const uint8_t* p) {
   return (uint32_t(p[0]) << 24) |
          (uint32_t(p[1]) << 16) |
          (uint32_t(p[2]) << 8)  |
          (uint32_t(p[3]) << 0);
 }
-static uint64_t read_u64_be(const uint8_t* p) {
+
+uint64_t read_u64_be(const uint8_t* p) {
   return (uint64_t(p[0]) << 56) |
          (uint64_t(p[1]) << 48) |
          (uint64_t(p[2]) << 40) |
@@ -101,7 +102,7 @@ static void write_frame_bg(uint8_t* buf, uint64_t offset,
   write_u32_be(buf + 16, (uint32_t)crc);
 }
 // 验段头：magic + version==1 + CRC 三刀；过刀吐 base_offset/walltime 给 open_append 入库
-static bool compare_magic_crc(const uint8_t* buf,
+ bool compare_magic_crc(const uint8_t* buf,
                               uint64_t* base_offset, uint64_t* walltime) {
   if (memcmp(buf, "PLOGSEGV", 8) != 0) return false;
   if (read_crc_big(buf + 8) != 1) return false;
@@ -163,16 +164,16 @@ bool Segment::sysnc(){
 // avail：header 起可用总字节数（含 20B 帧头）
 Framecheck  check_frame(const uint8_t* header16,size_t avail,uint64_t expected_offset,uint32_t prev_epoch){
   Framecheck check;
-  if(read_crc_big(header16+8)>net::messagemaxlen){check.kind=Framecheck::corrupt; return check; }
+  if(read_crc_big(header16+8)>net::messagemaxlen){check.corrupt_at=at_len; check.kind=Framecheck::corrupt; return check; }
   uint32_t len= read_crc_big(header16+8);
-  uint32_t epoch= read_crc_big(header16+12);
-  if(epoch<prev_epoch){check.kind=Framecheck::corrupt; return check;}      // epoch 倒退=损坏
+  check.epoch= read_crc_big(header16+12);
+  if(check.epoch<prev_epoch){check.corrupt_at=at_epoch; check.kind=Framecheck::corrupt; return check;}      // epoch 倒退=损坏
    if(avail<len+FRAME_HEAD) {check.kind=Framecheck::torn;check.torn_len=avail; return check;}
   uLong crc = crc32(0L, Z_NULL, 0);
   crc = crc32(crc,  header16+8, 8);
   crc = crc32(crc, header16+FRAME_HEAD, len);
-  if(crc!=read_crc_big(header16+16)){check.kind=Framecheck::corrupt; return check;}
-  if(read_u64_be(header16)!=expected_offset){check.kind=Framecheck::corrupt; return check;}
+  if(crc!=read_crc_big(header16+16)){check.corrupt_at=at_crc; check.kind=Framecheck::corrupt; return check;}
+  if(read_u64_be(header16)!=expected_offset){check.corrupt_at=at_offset; check.kind=Framecheck::corrupt; return check;}
   else {check.kind=Framecheck::valid; check.len=len; return check;}
 
 }
