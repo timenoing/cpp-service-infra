@@ -25,6 +25,7 @@ set(COMMON_SRC
     src/Message.cpp
     src/net/Connection.cpp
     src/Commit_log.cpp
+    src/mq/io/File_io.cpp
 )
 
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
@@ -39,11 +40,11 @@ add_executable(test_client src/test_client.cpp src/Message.cpp)
 
 add_executable(bench_client src/bench_client.cpp src/Message.cpp)
 
-add_executable(commit_test test/commit_test.cpp src/Commit_log.cpp)
+add_executable(commit_test test/commit_test.cpp src/Commit_log.cpp src/mq/io/File_io.cpp)
 target_link_libraries(commit_test PRIVATE ZLIB::ZLIB)
 
-add_executable(segment_test test/segment_test.cpp src/Segment.cpp)
+add_executable(segment_test test/segment_test.cpp src/Segment.cpp src/mq/io/File_io.cpp)
 target_link_libraries(segment_test PRIVATE ZLIB::ZLIB)
 
-add_executable(segment_recovery_test test/segment_recovery_test.cpp src/Segment_recovery.cpp src/Segment.cpp)
+add_executable(segment_recovery_test test/segment_recovery_test.cpp src/Segment_recovery.cpp src/Segment.cpp src/mq/io/File_io.cpp)
 target_link_libraries(segment_recovery_test PRIVATE ZLIB::ZLIB)

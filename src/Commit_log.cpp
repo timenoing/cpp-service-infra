@@ -1,10 +1,14 @@
 #include"Commit_log.h"
-mlog::Commitlog::Commitlog(std::string pat){
+static std::string dir_name(const std::string& p) {
+  auto pos = p.rfind('/');
+  return (pos == std::string::npos) ? std::string(".") : p.substr(0, pos);
+}
+mlog::Commitlog::Commitlog(std::string pat, mlog::io::File_io& io): io_(io){
   path=pat;
   fd=-1;
 }
 mlog::Commitlog::~Commitlog(){
- if(fd>0) ::close(fd);
+ if(fd>=0) io_.close(fd);
 }
 static uint32_t read_crc_big(uint8_t* p){
   return (uint32_t(p[0])<<24) |
@@ -39,22 +43,27 @@ static void write_u64_be(uint8_t* p, uint64_t v) {
     p[7] =  v        & 0xFF;
 }
 bool mlog::Commitlog::open_or_create(Commitlog::Reply& out){
-  fd=::open(path.c_str(),O_RDWR| O_CREAT,0644);
-  if(fd==-1){
-    return false;
+  fd=io_.open(path.c_str(), O_RDWR|O_CREAT|O_EXCL, 0644);
+  bool created=(fd!=-1);
+  if(!created){
+    if(errno!=EEXIST){ return false; }
+    fd=io_.open(path.c_str(), O_RDWR, 0644);
+    if(fd==-1){ return false; }
   }
+  if(created && io_.fsync_dir(dir_name(path).c_str())==-1){ return false; }
   uint8_t buf[36]={0};                                         
   struct stat st;
-  int len=::fstat(fd, &st);
-  if(len==0){ len=st.st_size;} else{return false; }
+  off_t len=0;
+  int rc=io_.fstat(fd, &st);
+  if(rc==0){ len=st.st_size;} else{return false; }
   uint64_t prev_batch_no=0;
   uint64_t prev_state=0;
   while(1){
     if(len-offset<36){
-      int i=::ftruncate(fd, offset);
+      int i=io_.ftruncate(fd, offset);
       break;
     }
-    if(::pread(fd,buf,36,offset)<0)
+    if(io_.pread(fd,buf,36,offset)<0)
     {out.corrupt=true; return false;}
     uint32_t crc_cmp=read_crc_big(buf+32);
   uLong crc=crc32(0,Z_NULL,0);
@@ -99,17 +108,12 @@ bool mlog::Commitlog::append(){
 crc=crc32(crc,buf,32);
 uint32_t c=static_cast<uint32_t>(crc);
  write_u32_be(buf+32,c );
- ssize_t n=::pwrite(fd,buf,36,offset);
+ ssize_t n=io_.pwrite(fd,buf,36,offset);
  if(n==36){offset+=n;  return true;}
  else if(n==-1)return false;
- else{int i=::ftruncate(fd, offset); return false;}
+ else{int i=io_.ftruncate(fd, offset); return false;}
  
 }
 bool mlog::Commitlog::sync(){
-   while(1){
-    if(::fdatasync(fd)==-1){
-      if(errno==EINTR){ continue;}
-      else return false;
-    }else{ return true;}
-   }
+  return io_.fdatasync(fd)==0;
 }

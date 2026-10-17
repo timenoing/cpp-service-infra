@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <chrono>
 #include "Message.h"
+#include "mq/io/File_io.h"
 // [v1.2 ADR-003] 帧头 20B：offset@0 u64 + len@8 u32 + epoch@12 u32 + CRC@16
 //   CRC 覆盖 len(4B)+epoch(4B)+payload；段内 epoch 单调不减（≥ 前帧）
 #define FRAME_HEAD 20
@@ -31,7 +32,7 @@ uint64_t read_u64_be(const uint8_t* p);
 uint32_t read_crc_big(const uint8_t* p);
 class Segment{
   public:
-  Segment(std::string path);
+  Segment(std::string path, mlog::io::File_io& io = mlog::io::posix_file_io());
   ~Segment();
   Segment(const Segment&)=delete;
   Segment& operator=(const Segment& ) =delete;
@@ -41,6 +42,7 @@ class Segment{
   bool sysnc();
   private:
   int fd;//正在写的文件
+  mlog::io::File_io& io_;
   std::string path;
   ssize_t offset=0;
   uint64_t base_offset=0;

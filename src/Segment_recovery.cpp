@@ -1,13 +1,13 @@
 #include "Segment_recovery.h"
-static uint64_t read_segment32(int fd ){
+static uint64_t read_segment32(mlog::io::File_io& io, int fd ){
    uint8_t buf[32];
- pread(fd, buf, 32, 0);
+ if(io.pread(fd, buf, 32, 0)!=32){ return 0; }
  uint64_t base_offset=read_u64_be(buf+12);
  uint64_t walltiem =read_u64_be(buf+20);
  if ( !compare_magic_crc(buf, &base_offset,&walltiem )){return 0; }
  else{ return base_offset; }
 }
-Segment_recovery::Segment_recovery(int inteval_,int fd_){
+Segment_recovery::Segment_recovery(int inteval_,int fd_,mlog::io::File_io& io): io_(io){
  inteval=inteval_;
  fd=fd_;
   buf= new uint8_t [20+net::messagemaxlen] ;
@@ -17,7 +17,7 @@ Segment_recovery::~Segment_recovery(){
  delete [] buf;
 }
 void Segment_recovery::turncate_segment(uint64_t offset){
-    ftruncate(fd, offset);
+    io_.ftruncate(fd, offset);
 }
 void Segment_recovery::server_idx(uint64_t offset){
   idx.push_back(offset);
@@ -44,18 +44,18 @@ uint64_t Segment_recovery::find_idx(const uint64_t idx_){
   }
 }
 Scan_end Segment_recovery::segment_scanner(){
-    uint64_t base_offset=read_segment32(fd);
+    uint64_t base_offset=read_segment32(io_, fd);
     uint64_t times=0;
     uint64_t byte_since=0;
     struct stat st;
-    int right=fstat(fd, &st);
-    auto filelen=st.st_size;
     Scan_end ans;
+    if(io_.fstat(fd, &st)==-1){ ans.kind=Scan_end::corrupt; return ans; }
+    auto filelen=st.st_size;
     if(base_offset==0){ans.kind=Scan_end::head_bad; return ans;}
     while(1){
      auto  want=20+std::min(static_cast<uint64_t>(net::messagemaxlen), 
                           static_cast<uint64_t>(filelen - offset));
-    int n=pread(fd,buf,want,offset);
+    int n=io_.pread(fd,buf,want,offset);
     int len=read_crc_big(buf+8);
     if(len>net::messagemaxlen){
     ans.kind = Scan_end::corrupt;

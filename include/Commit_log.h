@@ -7,6 +7,7 @@
 #include<sys/stat.h>
 #include <unistd.h>
 #include <zlib.h>
+#include "mq/io/File_io.h"
 namespace mlog{
 enum class comiitstatus {candidate=0, credited=1,published=2  };
 struct commitEntry{
@@ -26,7 +27,7 @@ class Commitlog{
      Commitlog(const Commitlog&)=delete;
      Commitlog& operator=(const Commitlog&)=delete;
     commitEntry log;
-    explicit Commitlog(std::string path);
+    explicit Commitlog(std::string path, mlog::io::File_io& io = mlog::io::posix_file_io());
     ~Commitlog();
     bool open_or_create(Reply& out);
     bool append();
@@ -35,6 +36,7 @@ class Commitlog{
     std::string path;
     int fd=-1;
     ssize_t offset=0;
+    mlog::io::File_io& io_;
 };
 };
 #endif

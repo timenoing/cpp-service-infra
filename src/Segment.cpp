@@ -3,19 +3,23 @@
 #include <cstring>
 #include <cerrno>
 
-Segment::Segment(std::string pat){
+static std::string dir_name(const std::string& p) {
+  auto pos = p.rfind('/');
+  return (pos == std::string::npos) ? std::string(".") : p.substr(0, pos);
+}
+Segment::Segment(std::string pat, mlog::io::File_io& io): io_(io){
   fd=-1;
   path=pat;
 }
 Segment::~Segment(){
-    if(fd>=0) {close(fd);}
+    if(fd>=0) {io_.close(fd);}
 }
 bool Segment:: write_len(const uint8_t* buf,ssize_t len){
-  ssize_t n= pwrite(fd, buf, len,  offset);
+  ssize_t n= io_.pwrite(fd, buf, len,  offset);
   if(n==-1){
     return false;
   }else if(n<len){
-   ftruncate(fd, offset);
+   io_.ftruncate(fd, offset);
    return false;
   }
   else {
@@ -24,11 +28,11 @@ bool Segment:: write_len(const uint8_t* buf,ssize_t len){
   }
 }
 bool Segment:: write_len(const char* buf,ssize_t len){
-  ssize_t n= pwrite(fd, buf, len,  offset);
+  ssize_t n= io_.pwrite(fd, buf, len,  offset);
   if(n==-1){
     return false;
   }else if(n<len){
-   ftruncate(fd, offset);
+   io_.ftruncate(fd, offset);
    return false;
   }
   else {
@@ -114,25 +118,27 @@ static void write_frame_bg(uint8_t* buf, uint64_t offset,
   return true;
 }
 bool Segment::creat(){
- fd=open(path.c_str(), O_CREAT|O_EXCL|O_WRONLY, 0644);
+ fd=io_.open(path.c_str(), O_CREAT|O_EXCL|O_WRONLY, 0644);
  if(fd==-1){
   return false;
  }
  uint8_t buf[32];
  write_seghead_bg(buf, 1, base_offset, now_millis());
- if(write_len(buf, 32)){ return true; }
- else{ftruncate(fd, offset); return false;}
+ if(!write_len(buf, 32)){ io_.ftruncate(fd, offset); return false; }
+ if(io_.fdatasync(fd)==-1){ return false; }
+ if(io_.fsync_dir(dir_name(path).c_str())==-1){ return false; }
+ return true;
  }
 bool Segment::open_append(){
- fd=open(path.c_str(), O_RDWR, 0644);
+ fd=io_.open(path.c_str(), O_RDWR, 0644);
  if(fd==-1){
   return false;
  }
  uint8_t buf[32];
- if(pread(fd,buf,32,0)!=32){ return false;}
+ if(io_.pread(fd,buf,32,0)!=32){ return false;}
  if(!compare_magic_crc(buf,&base_offset,&walltime)){return false; }
  struct stat st;
- if(fstat(fd,&st)==-1){
+ if(io_.fstat(fd,&st)==-1){
   return false;
  }
  offset=st.st_size;
@@ -149,16 +155,11 @@ bool Segment::append(const std::string& resp,uint64_t byte_off,uint32_t epoch){
   if(write_len(payload.c_str(), len)){
   last_epoch=epoch;
   return true;
-  } else{ offset-=FRAME_HEAD;  ftruncate(fd, offset); return false;}
+  } else{ offset-=FRAME_HEAD;  io_.ftruncate(fd, offset); return false;}
   }else{return false; }
 }
 bool Segment::sysnc(){
-    while(1){
-    if(::fdatasync(fd)==-1){
-      if(errno==EINTR){ continue;}
-      else return false;
-    }else{ return true;}
-   }
+  return io_.fdatasync(fd)==0;
 }
 // 合法性判定 [v1.2 §2.4] 四判据按序：len≤1MiB → offset==期望 → epoch≥prev_epoch → CRC → 剩余≥20+len
 // avail：header 起可用总字节数（含 20B 帧头）
