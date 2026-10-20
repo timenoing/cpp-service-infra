@@ -48,3 +48,6 @@ target_link_libraries(segment_test PRIVATE ZLIB::ZLIB)
 
 add_executable(segment_recovery_test test/segment_recovery_test.cpp src/Segment_recovery.cpp src/Segment.cpp src/mq/io/File_io.cpp)
 target_link_libraries(segment_recovery_test PRIVATE ZLIB::ZLIB)
+
+add_executable(file_io_test test/file_io_test.cpp src/mq/io/File_io.cpp src/Segment.cpp src/Segment_recovery.cpp src/Commit_log.cpp)
+target_link_libraries(file_io_test PRIVATE ZLIB::ZLIB)

@@ -56,6 +56,7 @@ Scan_end Segment_recovery::segment_scanner(){
      auto  want=20+std::min(static_cast<uint64_t>(net::messagemaxlen), 
                           static_cast<uint64_t>(filelen - offset));
     int n=io_.pread(fd,buf,want,offset);
+    if(n < 12){ ans.torn_end=offset; ans.vaild_end=offset; ans.kind=Scan_end::torn_tail; return ans; }
     int len=read_crc_big(buf+8);
     if(len>net::messagemaxlen){
     ans.kind = Scan_end::corrupt;
