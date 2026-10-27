@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 project(cpp-service-infra)
+find_package(Threads REQUIRED)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -51,3 +52,8 @@ target_link_libraries(segment_recovery_test PRIVATE ZLIB::ZLIB)
 
 add_executable(file_io_test test/file_io_test.cpp src/mq/io/File_io.cpp src/Segment.cpp src/Segment_recovery.cpp src/Commit_log.cpp)
 target_link_libraries(file_io_test PRIVATE ZLIB::ZLIB)
+
+add_executable(partition_log_test test/partition_log_test.cpp
+               src/mq/log/Partition_log.cpp src/mq/io/File_io.cpp
+               src/Segment.cpp src/Commit_log.cpp)
+target_link_libraries(partition_log_test PRIVATE Threads::Threads ZLIB::ZLIB)
