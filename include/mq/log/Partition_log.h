@@ -4,6 +4,7 @@
 #include "Commit_log.h"
 #include "Segment.h"
 #include <queue>
+#include <vector>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -72,6 +73,7 @@ namespace mlog {
    void workloop();
    private:
    std::string path;
+   std::atomic_bool halt=false;
    mlog::io::File_io& io;
    std::function<void(uint64_t request_id, uint64_t offset,size_t count,Status status)> on_commit;
    Logconfig config;

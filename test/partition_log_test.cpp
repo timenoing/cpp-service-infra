@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <mutex>
 #include <set>
 #include <string>
@@ -52,11 +53,6 @@ struct TempDir {
   }
 
   std::string str() const { return path.string(); }
-
-  void add_seed() const {
-    std::ofstream out((path / "seed").string());
-    out << 'x';
-  }
 };
 
 struct CommitRecord {
@@ -101,6 +97,68 @@ struct Recorder {
     return records.size();
   }
 };
+
+// ============================================================================
+// 盘面读取（片 C 判据：段帧与 commit.bin 都要能读回来对照）
+// ============================================================================
+static std::vector<uint8_t> slurp(const std::string& p) {
+  std::ifstream in(p, std::ios::binary);
+  if (!in) return {};
+  return std::vector<uint8_t>(std::istreambuf_iterator<char>(in),
+                              std::istreambuf_iterator<char>());
+}
+
+static uint64_t be64(const uint8_t* p) {
+  uint64_t v = 0;
+  for (int i = 0; i < 8; ++i) v = (v << 8) | p[i];
+  return v;
+}
+
+static uint32_t be32(const uint8_t* p) {
+  uint32_t v = 0;
+  for (int i = 0; i < 4; ++i) v = (v << 8) | p[i];
+  return v;
+}
+
+struct SFrame {
+  uint64_t off = 0;
+  uint32_t len = 0;
+  uint32_t epoch = 0;
+};
+
+static std::vector<SFrame> parse_seg(const std::vector<uint8_t>& b) {
+  std::vector<SFrame> out;
+  std::size_t p = 32;  // 32B 段头
+  while (p + 20 <= b.size()) {
+    SFrame f;
+    f.off = be64(&b[p]);
+    f.len = be32(&b[p + 8]);
+    f.epoch = be32(&b[p + 12]);
+    out.push_back(f);
+    p += 20 + f.len;
+  }
+  return out;
+}
+
+struct CEntry {
+  uint64_t batch_no = 0;
+  uint64_t hw = 0;
+  uint64_t epoch = 0;
+  uint8_t state = 0;
+};
+
+static std::vector<CEntry> parse_commit(const std::vector<uint8_t>& b) {
+  std::vector<CEntry> out;
+  for (std::size_t p = 0; p + 36 <= b.size(); p += 36) {
+    CEntry e;
+    e.batch_no = be64(&b[p]);
+    e.hw = be64(&b[p + 8]);
+    e.epoch = be64(&b[p + 16]);
+    e.state = b[p + 24];
+    out.push_back(e);
+  }
+  return out;
+}
 
 int main() {
   {
@@ -277,125 +335,192 @@ int main() {
     CHECK(q.queued_bytes() == 0);
   }
 
+  // ==========================================================================
+  // 片 C · S1~S7 主链：A(2) → B(3) → 空批 → 失租 → G(1) → 干净重开
+  // ==========================================================================
   {
     TempDir dir;
-    mlog::io::SimFileIo io;
-    Recorder rec;
     mlog::Logconfig cfg;
-    mlog::PartitionLog log(dir.str(), cfg, rec.callback(), io);
-    rec.log.store(&log, std::memory_order_release);
-
-    CHECK(!log.recover());
-    CHECK(!log.try_enqueue(make_batch(1, 1)));
-    CHECK(log.published_hw() == 0);
-
-    dir.add_seed();
-    CHECK(log.recover());
-    CHECK(log.recover());
-    CHECK(log.current_epoch() == 0);
-
-    log.set_lease(7, true);
-    CHECK(log.current_epoch() == 7);
-    CHECK(log.try_enqueue(make_batch(10, 2)));
-    CHECK(log.try_enqueue(make_batch(11, 3)));
-    CHECK(rec.wait_for(2));
-
-    auto r = rec.snapshot();
-    CHECK(r.size() == 2);
-    CHECK(r[0].request_id == 10);
-    CHECK(r[0].offset == 0);
-    CHECK(r[0].count == 2);
-    CHECK(r[0].status == mlog::Status::ok);
-    CHECK(r[0].hw_at_callback == 2);
-    CHECK(r[1].request_id == 11);
-    CHECK(r[1].offset == 2);
-    CHECK(r[1].count == 3);
-    CHECK(r[1].status == mlog::Status::ok);
-    CHECK(r[1].hw_at_callback == 5);
-    CHECK(log.published_hw() == 5);
-
-    CHECK(log.try_enqueue(make_batch(12, 0)));
-    CHECK(rec.wait_for(3));
-    r = rec.snapshot();
-    CHECK(r.size() == 3);
-    CHECK(r[2].request_id == 12);
-    CHECK(r[2].offset == 5);
-    CHECK(r[2].count == 0);
-    CHECK(r[2].status == mlog::Status::ok);
-    CHECK(r[2].hw_at_callback == 5);
-    CHECK(log.published_hw() == 5);
-
-    std::vector<std::string> out{"stale"};
-    uint64_t next = 123;
-    uint64_t hw = 0;
-    CHECK(log.fetch(123, 4096, out, next, hw) == mlog::Status::out_of_range);
-    CHECK(out.empty());
-    CHECK(next == 123);
-    CHECK(hw == 5);
-
-    log.set_lease(7, false);
-    CHECK(log.current_epoch() == 7);
-    CHECK(log.try_enqueue(make_batch(13, 4)));
-    CHECK(rec.wait_for(4));
-    r = rec.snapshot();
-    CHECK(r.size() == 4);
-    CHECK(r[3].request_id == 13);
-    CHECK(r[3].offset == 5);
-    CHECK(r[3].count == 4);
-    CHECK(r[3].status == mlog::Status::not_leader);
-    CHECK(r[3].hw_at_callback == 5);
-    CHECK(log.published_hw() == 5);
-  }
-
-  {
-    TempDir dir;
-    dir.add_seed();
-    mlog::io::SimFileIo io;
-    Recorder rec;
-    mlog::Logconfig cfg;
-    mlog::PartitionLog log(dir.str(), cfg, rec.callback(), io);
-    rec.log.store(&log, std::memory_order_release);
-
-    CHECK(log.recover());
-    CHECK(log.try_enqueue(make_batch(20, 2)));
-    CHECK(rec.wait_for(1));
-
-    auto r = rec.snapshot();
-    CHECK(r.size() == 1);
-    CHECK(r[0].request_id == 20);
-    CHECK(r[0].offset == 0);
-    CHECK(r[0].count == 2);
-    CHECK(r[0].status == mlog::Status::not_leader);
-    CHECK(r[0].hw_at_callback == 0);
-    CHECK(log.published_hw() == 0);
-  }
-
-  {
-    TempDir dir;
-    dir.add_seed();
-    mlog::io::SimFileIo io;
-    Recorder rec;
-    mlog::Logconfig cfg;
+    const std::string seg = dir.str() + "/log-00000000000000000000.seg";
+    const std::string cmt = dir.str() + "/commit.bin";
 
     {
-      mlog::PartitionLog log(dir.str(), cfg, rec.callback(), io);
+      Recorder rec;
+      mlog::PartitionLog log(dir.str(), cfg, rec.callback());
       rec.log.store(&log, std::memory_order_release);
+
+      // 空目录建新日志：32B 段头 + 空账本
       CHECK(log.recover());
-      log.set_lease(1, true);
-      for (int i = 0; i < 64; ++i) {
-        CHECK(log.try_enqueue(make_batch(1000 + (uint64_t)i, 1)));
+      CHECK(log.published_hw() == 0);
+      CHECK(slurp(seg).size() == 32);
+      CHECK(slurp(cmt).empty());
+
+      // 第一组：A(2) → (0,2,ok)，HW 2，batch 1
+      log.set_lease(7, true);
+      CHECK(log.try_enqueue(make_batch(100, 2)));
+      CHECK(rec.wait_for(1));
+      auto r = rec.snapshot();
+      CHECK(r[0].request_id == 100);
+      CHECK(r[0].offset == 0);
+      CHECK(r[0].count == 2);
+      CHECK(r[0].status == mlog::Status::ok);
+      CHECK(log.published_hw() == 2);
+
+      // 第二组：B(3) → (2,3,ok)，HW 5
+      CHECK(log.try_enqueue(make_batch(101, 3)));
+      CHECK(rec.wait_for(2));
+      r = rec.snapshot();
+      CHECK(r[1].request_id == 101);
+      CHECK(r[1].offset == 2);
+      CHECK(r[1].count == 3);
+      CHECK(r[1].status == mlog::Status::ok);
+      CHECK(log.published_hw() == 5);
+
+      // 段：5 帧，offset 0~4，epoch 7，每条 1 字节
+      const auto frames = parse_seg(slurp(seg));
+      CHECK(frames.size() == 5);
+      for (int i = 0; i < 5; ++i) {
+        CHECK(frames[(std::size_t)i].off == (uint64_t)i);
+        CHECK(frames[(std::size_t)i].len == 1);
+        CHECK(frames[(std::size_t)i].epoch == 7);
       }
+
+      // 账本：两组各 candidate/credited/published 三条
+      auto e = parse_commit(slurp(cmt));
+      CHECK(e.size() == 6);
+      CHECK(e[0].batch_no == 1 && e[0].state == 0 && e[0].hw == 2);
+      CHECK(e[1].batch_no == 1 && e[1].state == 1 && e[1].hw == 2);
+      CHECK(e[2].batch_no == 1 && e[2].state == 2 && e[2].hw == 2);
+      CHECK(e[3].batch_no == 2 && e[3].state == 0 && e[3].hw == 5);
+      CHECK(e[4].batch_no == 2 && e[4].state == 1 && e[4].hw == 5);
+      CHECK(e[5].batch_no == 2 && e[5].state == 2 && e[5].hw == 5);
+
+      // 空批：不写盘、不占 offset、HW 不动
+      CHECK(log.try_enqueue(make_batch(102, 0)));
+      CHECK(rec.wait_for(3));
+      r = rec.snapshot();
+      CHECK(r[2].request_id == 102);
+      CHECK(r[2].offset == 5);
+      CHECK(r[2].count == 0);
+      CHECK(r[2].status == mlog::Status::ok);
+      CHECK(log.published_hw() == 5);
+      CHECK(slurp(cmt).size() == 6 * 36);
+      CHECK(parse_seg(slurp(seg)).size() == 5);
+
+      // 批头失租：not_leader，段与账本不增长
+      log.set_lease(7, false);
+      CHECK(log.try_enqueue(make_batch(103, 4)));
+      CHECK(rec.wait_for(4));
+      r = rec.snapshot();
+      CHECK(r[3].request_id == 103);
+      CHECK(r[3].offset == 5);
+      CHECK(r[3].count == 4);
+      CHECK(r[3].status == mlog::Status::not_leader);
+      CHECK(log.published_hw() == 5);
+      CHECK(slurp(cmt).size() == 6 * 36);
+      CHECK(parse_seg(slurp(seg)).size() == 5);
+
+      // 重新拿回租约：继续从 5 写
+      log.set_lease(7, true);
+      CHECK(log.try_enqueue(make_batch(104, 1)));
+      CHECK(rec.wait_for(5));
+      r = rec.snapshot();
+      CHECK(r[4].request_id == 104);
+      CHECK(r[4].offset == 5);
+      CHECK(r[4].count == 1);
+      CHECK(r[4].status == mlog::Status::ok);
+      CHECK(log.published_hw() == 6);
+
+      e = parse_commit(slurp(cmt));
+      CHECK(e.size() == 9);
+      CHECK(e[6].batch_no == 3 && e[6].state == 0 && e[6].hw == 6);
+      CHECK(e[7].batch_no == 3 && e[7].state == 1 && e[7].hw == 6);
+      CHECK(e[8].batch_no == 3 && e[8].state == 2 && e[8].hw == 6);
     }
 
-    CHECK(rec.size() == 64);
-    auto r = rec.snapshot();
-    for (int i = 0; i < 64; ++i) {
-      CHECK(r[i].request_id == 1000 + (uint64_t)i);
-      CHECK(r[i].offset == (uint64_t)i);
-      CHECK(r[i].count == 1);
-      CHECK(r[i].status == mlog::Status::ok);
-      CHECK(r[i].hw_at_callback == (uint64_t)(i + 1));
+    // 干净重开：读回 credit_hw / last_batch_no，继续编号与 offset
+    {
+      Recorder rec;
+      mlog::PartitionLog log(dir.str(), cfg, rec.callback());
+      rec.log.store(&log, std::memory_order_release);
+      CHECK(log.recover());
+      CHECK(log.published_hw() == 6);
+      CHECK(log.current_epoch() == 7);
+
+      log.set_lease(7, true);
+      CHECK(log.try_enqueue(make_batch(105, 1)));
+      CHECK(rec.wait_for(1));
+      auto r = rec.snapshot();
+      CHECK(r[0].request_id == 105);
+      CHECK(r[0].offset == 6);
+      CHECK(r[0].count == 1);
+      CHECK(r[0].status == mlog::Status::ok);
+      CHECK(log.published_hw() == 7);
+
+      const auto e = parse_commit(slurp(cmt));
+      CHECK(e.size() == 12);
+      CHECK(e[9].batch_no == 4 && e[9].state == 0 && e[9].hw == 7);
+      CHECK(e[11].batch_no == 4 && e[11].state == 2 && e[11].hw == 7);
     }
+  }
+
+  // 全空组：不写段、不写账本、不吃 batch_no
+  {
+    TempDir dir;
+    mlog::Logconfig cfg;
+    Recorder rec;
+    mlog::PartitionLog log(dir.str(), cfg, rec.callback());
+    rec.log.store(&log, std::memory_order_release);
+    CHECK(log.recover());
+    log.set_lease(3, true);
+    CHECK(log.try_enqueue(make_batch(1, 0)));
+    CHECK(rec.wait_for(1));
+    const auto r = rec.snapshot();
+    CHECK(r[0].offset == 0);
+    CHECK(r[0].count == 0);
+    CHECK(r[0].status == mlog::Status::ok);
+    CHECK(log.published_hw() == 0);
+    CHECK(slurp(dir.str() + "/commit.bin").empty());
+    CHECK(slurp(dir.str() + "/log-00000000000000000000.seg").size() == 32);
+  }
+
+  // 段 sync 失败：fail-stop，当前组 io_error，HW 不动，后续入队被拒
+  {
+    TempDir dir;
+    mlog::io::SimFileIo io;
+    mlog::Logconfig cfg;
+    Recorder rec;
+    mlog::PartitionLog log(dir.str(), cfg, rec.callback(), io);
+    rec.log.store(&log, std::memory_order_release);
+    CHECK(log.recover());
+    log.set_lease(5, true);
+    io.inject_sync_fail(1);  // 下一次 fdatasync 就是 S2
+    CHECK(log.try_enqueue(make_batch(200, 2)));
+    CHECK(rec.wait_for(1));
+    const auto r = rec.snapshot();
+    CHECK(r[0].request_id == 200);
+    CHECK(r[0].offset == 0);
+    CHECK(r[0].count == 2);
+    CHECK(r[0].status == mlog::Status::io_error);
+    CHECK(log.published_hw() == 0);
+    CHECK(!log.try_enqueue(make_batch(201, 1)));
+  }
+
+  // fetch 仍是片 B 的桩
+  {
+    TempDir dir;
+    mlog::Logconfig cfg;
+    Recorder rec;
+    mlog::PartitionLog log(dir.str(), cfg, rec.callback());
+    rec.log.store(&log, std::memory_order_release);
+    CHECK(log.recover());
+    std::vector<std::string> out{"stale"};
+    uint64_t next = 42;
+    uint64_t hw = 7;
+    CHECK(log.fetch(5, 1024, out, next, hw) == mlog::Status::out_of_range);
+    CHECK(out.empty());
+    CHECK(next == 5);
+    CHECK(hw == 0);
   }
 
   std::printf("partition_log_test: all passed\n");
