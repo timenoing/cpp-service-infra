@@ -160,6 +160,19 @@ static std::vector<CEntry> parse_commit(const std::vector<uint8_t>& b) {
   return out;
 }
 
+// S6 回包早于 S7 发布条落盘（发布条不单独 sync，随下一组 S5 才落），
+// 所以等到回包后不能立刻读账本；按目标条数轮询，超时返回 false 让 CHECK 报错。
+static bool wait_commit_entries(const std::string& p, std::size_t n,
+                                std::chrono::milliseconds timeout =
+                                    std::chrono::milliseconds(2000)) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (true) {
+    if (slurp(p).size() >= n * 36) return true;
+    if (std::chrono::steady_clock::now() >= deadline) return false;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+}
+
 int main() {
   {
     mlog::Mpsc_bounded q(16u << 20, 128);
@@ -386,6 +399,7 @@ int main() {
       }
 
       // 账本：两组各 candidate/credited/published 三条
+      CHECK(wait_commit_entries(cmt, 6));
       auto e = parse_commit(slurp(cmt));
       CHECK(e.size() == 6);
       CHECK(e[0].batch_no == 1 && e[0].state == 0 && e[0].hw == 2);
@@ -431,6 +445,7 @@ int main() {
       CHECK(r[4].status == mlog::Status::ok);
       CHECK(log.published_hw() == 6);
 
+      CHECK(wait_commit_entries(cmt, 9));
       e = parse_commit(slurp(cmt));
       CHECK(e.size() == 9);
       CHECK(e[6].batch_no == 3 && e[6].state == 0 && e[6].hw == 6);
@@ -457,6 +472,7 @@ int main() {
       CHECK(r[0].status == mlog::Status::ok);
       CHECK(log.published_hw() == 7);
 
+      CHECK(wait_commit_entries(cmt, 12));
       const auto e = parse_commit(slurp(cmt));
       CHECK(e.size() == 12);
       CHECK(e[9].batch_no == 4 && e[9].state == 0 && e[9].hw == 7);
