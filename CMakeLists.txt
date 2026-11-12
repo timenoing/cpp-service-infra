@@ -6,7 +6,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# 重点！加上 ${PROJECT_SOURCE_DIR} 项目根目录！
 include_directories(
     ${PROJECT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/include
@@ -57,3 +56,53 @@ add_executable(partition_log_test test/partition_log_test.cpp
                src/mq/log/Partition_log.cpp src/mq/io/File_io.cpp
                src/Segment.cpp src/Commit_log.cpp)
 target_link_libraries(partition_log_test PRIVATE Threads::Threads ZLIB::ZLIB)
+
+add_executable(peer_sender_test test/peer_sender_test.cpp
+               src/mq/raft/peer_sender.cpp src/Message.cpp)
+target_link_libraries(peer_sender_test PRIVATE Threads::Threads)
+
+add_executable(inbox_test test/inbox_test.cpp
+               src/mq/raft/raft_inbox.cpp src/Message.cpp)
+target_link_libraries(inbox_test PRIVATE Threads::Threads)
+
+add_executable(inbox_epoll_test test/inbox_epoll_test.cpp
+               src/mq/raft/raft_handler.cpp
+               src/mq/raft/raft_inbox.cpp
+               src/Message.cpp
+               src/Epoll.cpp
+               src/Donequeue.cpp
+               src/ThreadPool.cpp
+               src/Logger.cpp
+               src/Trace.cpp
+               src/net/Connection.cpp)
+target_link_libraries(inbox_epoll_test PRIVATE Threads::Threads)
+
+add_executable(raft_codec_test test/raft_codec_test.cpp src/Message.cpp)
+
+add_executable(ping_three_process_test test/ping_three_process_test.cpp
+               src/mq/raft/raft_handler.cpp
+               src/mq/raft/raft_inbox.cpp
+               src/mq/raft/peer_sender.cpp
+               src/Message.cpp
+               src/Epoll.cpp
+               src/Donequeue.cpp
+               src/ThreadPool.cpp
+               src/Logger.cpp
+               src/Trace.cpp
+               src/net/Connection.cpp)
+target_link_libraries(ping_three_process_test PRIVATE Threads::Threads)
+set(CMAKE_CXX_STANDARD 17)
+add_executable(raft_node
+    main.cpp
+    src/mq/raft/Raftnode.cpp
+    src/mq/raft/raft_inbox.cpp
+    src/mq/raft/peer_sender.cpp
+    src/Message.cpp
+    src/Epoll.cpp
+    src/Donequeue.cpp
+    src/ThreadPool.cpp
+    src/Logger.cpp
+    src/Trace.cpp
+    src/net/Connection.cpp
+    src/mq/io/File_io.cpp)
+target_link_libraries(raft_node PRIVATE Threads::Threads)

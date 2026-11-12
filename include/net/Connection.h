@@ -24,7 +24,7 @@ class Connection{
      Connection(int epfd,int fd,uint64_t conn_id,ThreadPool* poll,Donequeue* done, std::function<std::string (const std::string&)> handler);
      ~Connection();
  struct fd_status{
-      bool live;
+      bool live = false;
       std::vector<char> Outbuffer;
       int idx=0;
       net::messagedecode decoder;

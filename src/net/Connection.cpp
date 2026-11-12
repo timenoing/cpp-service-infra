@@ -83,7 +83,7 @@ ssize_t n=0;
     }
   
   }
-  
+  return true;
 }
 bool net::Connection::senddata(const std::string& accept)
 {

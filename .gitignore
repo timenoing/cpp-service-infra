@@ -8,3 +8,4 @@ src/server
 core.*
 .cache/
 9.2main.cpp
+raft_node
