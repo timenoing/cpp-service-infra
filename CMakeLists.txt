@@ -106,3 +106,16 @@ add_executable(raft_node
     src/net/Connection.cpp
     src/mq/io/File_io.cpp)
 target_link_libraries(raft_node PRIVATE Threads::Threads)
+
+add_executable(raft_router
+    main_router.cpp
+    src/mq/raft/raft_router.cpp
+    src/mq/raft/peer_sender.cpp
+    src/Message.cpp
+    src/Epoll.cpp
+    src/Donequeue.cpp
+    src/ThreadPool.cpp
+    src/Logger.cpp
+    src/Trace.cpp
+    src/net/Connection.cpp)
+target_link_libraries(raft_router PRIVATE Threads::Threads)

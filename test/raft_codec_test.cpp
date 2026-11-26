@@ -210,7 +210,7 @@ void test_raft_envelope() {
 
   for (const auto& msg : messages) {
     std::string payload;
-    assert(raft_encode(3, payload, msg));
+    assert(raft_encode(0, 3, payload, msg));
 
     rcp decoded;
     uint8_t opcode = 0;
@@ -242,7 +242,7 @@ void test_raft_code_truncation() {
   ae.entries.push_back(Log{9, "data"});
 
   std::string payload;
-  assert(raft_encode(9, payload, rcp{ae}));
+  assert(raft_encode(0, 9, payload, rcp{ae}));
 
   for (std::size_t n = 0; n < 5; ++n) {
     rcp decoded;

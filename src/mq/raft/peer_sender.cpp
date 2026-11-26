@@ -40,13 +40,13 @@ bool PeerSender::start() {
   return true;
 }
 
-bool PeerSender::try_send(const rcp& msg) {
+bool PeerSender::try_send(uint32_t to,const rcp& msg) {
   {
     std::lock_guard<std::mutex> lk(mtx_);
     if (!started_ || stopping_) return false;
   }
   std::string payload;
-  if (!raft_encode(self_id_, payload, msg)) return false;
+  if (!raft_encode(to,self_id_, payload, msg)) return false;
   std::string frame = net::encode(payload);
   bool was_empty = false;
   {
@@ -259,3 +259,16 @@ bool PeerSender::wait_backoff(std::size_t ms) {
   return !cv_.wait_for(lk, std::chrono::milliseconds(ms),
                        [this] { return stopping_; });
 }
+
+void PeerSender::send_raw(const std::string m){
+  std::string frame = net::encode(m);
+  {
+   std::lock_guard<std::mutex> lk(mtx_);
+    if (stopping_) return;
+    if (queue_.size() >= kMaxTasks) return;
+    if (queued_bytes_ + frame.size() > kMaxBytes) return;
+    queued_bytes_ += frame.size();
+    queue_.push_back(std::move(frame));
+  }
+  cv_.notify_one();
+} 

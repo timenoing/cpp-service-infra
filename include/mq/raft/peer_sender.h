@@ -15,9 +15,9 @@ class PeerSender {
   PeerSender(const PeerSender&) = delete;
   PeerSender& operator=(const PeerSender&) = delete;
   bool start();
-  bool try_send(const rcp& msg);
+  bool try_send(uint32_t to,const rcp& msg);
   void stop();
-  
+  void send_raw(const std::string);
  private:
   void workloop();
   bool connect_peer();

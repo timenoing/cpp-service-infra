@@ -87,7 +87,7 @@ rcp make_vote(uint32_t from, uint64_t term) {
 
 std::string make_payload(uint32_t from, const rcp& msg) {
   std::string payload;
-  const bool ok = raft_encode(from, payload, msg);
+  const bool ok = raft_encode(0, from, payload, msg);
   assert(ok);
   (void)ok;
   return payload;
@@ -244,8 +244,8 @@ void test_valid_frame() {
   assert(client.connect_to(server.port()));
 
   const std::string payload = make_payload(7, make_vote(7, 42));
-  // Requestvote: from(4) + opcode(1) + body(32)
-  assert(payload.size() == 37);
+  // Requestvote: to(4) + from(4) + opcode(1) + body(32)
+  assert(payload.size() == 41);
 
   assert(client.send_frame(payload));
   assert(client.expect_ack());
@@ -254,7 +254,7 @@ void test_valid_frame() {
   assert(server.inbox().wait_pop(out, 500) == Popstatic::Ok);
   assert(out.from == 7);
   assert(out.opcode == 1);
-  assert(out.bytes == 37);
+  assert(out.bytes == 41);
   assert(std::holds_alternative<Requestvote>(out.msg));
   assert(std::get<Requestvote>(out.msg).term == 42);
 

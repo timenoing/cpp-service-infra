@@ -95,6 +95,28 @@
 
 ---
 
+## 10. 3A churn 用例随机停 3/5 节点——自己丢 quorum 导致假失败 【欠账（测试缺陷，待修）】
+
+- **是什么**：`test_partition.Partition.test_term_never_decreases` 每轮从“非 leader”里随机挑一个节点 `pause/resume`，没有限制累计暂停数；随机序列可能停到 3/5，集群失去多数派，后续 `check_one_leader(3.0)` 必然超时，看起来像 Raft 选不出主。
+- **在哪**：`test/fault/test_partition.py` 的 `test_term_never_decreases`（10 轮抖动循环）。
+- **谁碰**：3A soak。2026-11-26 按 6.824 分组跑 3A×20（`test_election` / `test3a` / `test_partition` 各 20）时，`test_partition #11` 命中；把这条用例单独复跑 10 次，又命中 1 次。
+- **为什么**：`victim = random.choice([i for i in range(1, 6) if i != leader])` 不排除已暂停的节点；本轮 victim 与上轮不同时，上轮节点继续暂停，`paused` 只增不减。5 节点 quorum=3，停 3 个后 candidate 最多拿 2 票。失败快照：`{1:None, 3:None, 4:None, 2:candidate term=12 votecount=2, 5:floower term=12}`，节点 2 只有自己 + 节点 5 两票。
+- **怎么修（建议，未实施）**：把同时暂停的节点数压到 `n/2` 以下。例：
+  ```python
+  if len(cfg.paused) >= 2:
+      cfg.resume(random.choice(sorted(cfg.paused)))
+  else:
+      choices = [i for i in range(1, 6)
+                 if i != leader and i not in cfg.paused]
+      if choices:
+          cfg.pause(random.choice(choices))
+  ```
+  这样 5 节点始终至少 3 个可达，churn 照样保留。
+- **怎么验**：修复前单条用例 10 次 9/10；修复后按 3A×20 重跑，要求 `test_partition` 20/20、整组 60/60（`test_old_leader_becomes_follower` 仍按已知缺陷 skip）。
+- **备注**：这是测试注入缺陷，不是 Raft 实现缺陷；同一轮 3B 20/20、3C 20/20，旧 leader 落盘截断用例 10/10。
+
+---
+
 ## 附录：验收守则（环境坑，非代码 BUG）
 
 - **PowerShell→ssh 引号坑**：远端命令含 `()`、`|`、`"` 必炸；一律走"本地写脚本文件 → scp → bash 执行"。

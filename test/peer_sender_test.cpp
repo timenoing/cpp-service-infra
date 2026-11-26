@@ -146,7 +146,7 @@ class MiniReceiver {
 void test_bad_ip() {
   PeerSender sender(1, "not-an-ip", 1234);
   assert(!sender.start());
-  assert(!sender.try_send(rcp{Requestvote{}}));
+  assert(!sender.try_send(0, rcp{Requestvote{}}));
 }
 
 void test_double_start() {
@@ -174,7 +174,7 @@ void test_send_receive() {
     v.last_Logindex = static_cast<uint64_t>(100 + i);
     v.last_Logterm = static_cast<uint64_t>(i);
     v.requseter_id = 7;
-    assert(sender.try_send(rcp{v}));
+    assert(sender.try_send(0, rcp{v}));
   }
 
   std::vector<std::string> all;
@@ -233,7 +233,7 @@ void test_queue_limit() {
     v.term = static_cast<uint64_t>(i);
 
     const auto t0 = std::chrono::steady_clock::now();
-    const bool ok = sender.try_send(rcp{v});
+    const bool ok = sender.try_send(0, rcp{v});
     const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
                         std::chrono::steady_clock::now() - t0)
                         .count();
@@ -264,7 +264,7 @@ void test_monostate() {
 
   PeerSender sender(3, "127.0.0.1", receiver.port());
   assert(sender.start());
-  assert(!sender.try_send(rcp{std::monostate{}}));
+  assert(!sender.try_send(0, rcp{std::monostate{}}));
   sender.stop();
 }
 

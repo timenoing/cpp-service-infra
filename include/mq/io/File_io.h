@@ -1,6 +1,7 @@
 #ifndef FILE_IO_H
 #define FILE_IO_H
 #include <cstdint>
+#include <zlib.h>
 #include<cstring>
 #include<fcntl.h>
 #include <unistd.h>
@@ -10,6 +11,62 @@
 #include<map>
 #include <string>
 #include <algorithm>
+static uint32_t calculate_crc(const uint8_t* data, size_t length) {
+    static uint32_t crc_table[256]{};
+    static bool table_empyt=true;
+    if(table_empyt){
+        for(uint32_t i=0;i<256;i++){
+        uint32_t c = i;
+            for (int j = 0; j < 8; ++j) {
+                c = (c & 1) ? (0xEDB88320 ^ (c >> 1)) : (c >> 1);
+            }
+            crc_table[i] = c;
+        }
+        table_empyt=false;
+    }
+    uint32_t crc = 0xFFFFFFFF;
+    for (size_t i = 0; i < length; ++i) {
+        crc = crc_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
+    }
+    return crc ^ 0xFFFFFFFF;
+}
+
+static bool verify_crc(const uint8_t*data, size_t length, uint32_t received_crc) {
+    uint32_t calculated_crc = calculate_crc(data, length);
+    return calculated_crc == received_crc;
+}
+static void write_u64_be(uint8_t* p, uint64_t v) {
+    p[0] = (v >> 56) & 0xFF;
+    p[1] = (v >> 48) & 0xFF;
+    p[2] = (v >> 40) & 0xFF;
+    p[3] = (v >> 32) & 0xFF;
+    p[4] = (v >> 24) & 0xFF;
+    p[5] = (v >> 16) & 0xFF;
+    p[6] = (v >> 8)  & 0xFF;
+    p[7] =  v        & 0xFF;
+}
+static uint64_t read_u64_be(uint8_t* p) {
+    return (uint64_t(p[0]) << 56) |
+           (uint64_t(p[1]) << 48) |
+           (uint64_t(p[2]) << 40) |
+           (uint64_t(p[3]) << 32) |
+           (uint64_t(p[4]) << 24) |
+           (uint64_t(p[5]) << 16) |
+           (uint64_t(p[6]) << 8)  |
+            uint64_t(p[7]);
+}
+static void write_u32_be(uint8_t* p, uint32_t v) {
+  p[0] = (v >> 24) & 0xFF;
+  p[1] = (v >> 16) & 0xFF;
+  p[2] = (v >> 8)  & 0xFF;
+  p[3] =  v        & 0xFF;
+}
+static uint32_t read_u32_be(const uint8_t* p) {
+  return (uint32_t(p[0]) << 24) |
+         (uint32_t(p[1]) << 16) |
+         (uint32_t(p[2]) << 8)  |
+         (uint32_t(p[3]) << 0);
+}
 namespace mlog {namespace io {
  class File_io{
  public:

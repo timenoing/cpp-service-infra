@@ -3,7 +3,7 @@
 
 Speaks the same 4-byte length framed envelope as net::encode():
 
-    request   [u32 len][u32 from][u8 opcode]
+    request   [u32 len][u32 to][u32 from][u8 opcode]
     response  [u32 len][json]
 
 Usage:
@@ -34,7 +34,8 @@ def recv_exact(sock, n):
 def query(host, port, timeout):
     sock = socket.create_connection((host, port), timeout=timeout)
     try:
-        payload = struct.pack(">I", 0) + bytes([OPCODE_STATUS_QUERY])
+        # to=0 表示"就是这条连接到的节点"，from=0 表示客户端
+        payload = struct.pack(">II", 0, 0) + bytes([OPCODE_STATUS_QUERY])
         sock.sendall(struct.pack(">I", len(payload)) + payload)
 
         body_len = struct.unpack(">I", recv_exact(sock, 4))[0]

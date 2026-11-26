@@ -65,22 +65,6 @@ uint64_t read_u64_be(const uint8_t* p) {
          (uint64_t(p[6]) << 8)  |
           uint64_t(p[7]);
 }
-static void write_u32_be(uint8_t* p, uint32_t v) {
-  p[0] = (v >> 24) & 0xFF;
-  p[1] = (v >> 16) & 0xFF;
-  p[2] = (v >> 8)  & 0xFF;
-  p[3] =  v        & 0xFF;
-}
-static void write_u64_be(uint8_t* p, uint64_t v) {
-  p[0] = (v >> 56) & 0xFF;
-  p[1] = (v >> 48) & 0xFF;
-  p[2] = (v >> 40) & 0xFF;
-  p[3] = (v >> 32) & 0xFF;
-  p[4] = (v >> 24) & 0xFF;
-  p[5] = (v >> 16) & 0xFF;
-  p[6] = (v >> 8)  & 0xFF;
-  p[7] =  v        & 0xFF;
-}
 // 段头 32B：magic(8) + version@8 u32 + base_offset@12 u64 + walltime@20 u64 + CRC@28（覆盖前 28B）
 static void write_seghead_bg(uint8_t* buf, uint32_t version,
                              uint64_t base_offset, uint64_t walltime) {
@@ -105,7 +89,7 @@ static void write_frame_bg(uint8_t* buf, uint64_t offset,
   if (len) crc = crc32(crc, (const uint8_t*)payload.data(), len);
   write_u32_be(buf + 16, (uint32_t)crc);
 }
-// 验段头：magic + version==1 + CRC 三刀；过刀吐 base_offset/walltime 给 open_append 入库
+
  bool compare_magic_crc(const uint8_t* buf,
                               uint64_t* base_offset, uint64_t* walltime) {
   if (memcmp(buf, "PLOGSEGV", 8) != 0) return false;
@@ -149,7 +133,7 @@ bool Segment::append(const std::string& resp,uint64_t byte_off,uint32_t epoch){
   std::string payload =std::move(resp);
   ssize_t len=payload.size();
   if(len>net::messagemaxlen) return false;
-  if(epoch < last_epoch) return false;      // 段内 epoch 单调不减 [v1.2 §2.3]
+  if(epoch < last_epoch) return false;     
   write_frame_bg(buf, byte_off, epoch, payload);
  if(write_len(buf, FRAME_HEAD)) {
   if(write_len(payload.c_str(), len)){
@@ -161,8 +145,7 @@ bool Segment::append(const std::string& resp,uint64_t byte_off,uint32_t epoch){
 bool Segment::sysnc(){
   return io_.fdatasync(fd)==0;
 }
-// 合法性判定 [v1.2 §2.4] 四判据按序：len≤1MiB → offset==期望 → epoch≥prev_epoch → CRC → 剩余≥20+len
-// avail：header 起可用总字节数（含 20B 帧头）
+
 Framecheck  check_frame(const uint8_t* header16,size_t avail,uint64_t expected_offset,uint32_t prev_epoch){
   Framecheck check;
   if(read_crc_big(header16+8)>net::messagemaxlen){check.corrupt_at=at_len; check.kind=Framecheck::corrupt; return check; }

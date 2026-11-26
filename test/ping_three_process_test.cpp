@@ -162,7 +162,7 @@ int run_node(const NodeConfig& cfg, int seconds, const std::string& summary_path
         vote.requseter_id = cfg.id;
 
         for (auto& item : senders) {
-          if (item.second->try_send(rcp{vote})) {
+          if (item.second->try_send(item.first, rcp{vote})) {
             ++stats.sent;
           } else {
             ++stats.send_fail;

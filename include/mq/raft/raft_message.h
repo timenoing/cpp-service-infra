@@ -56,7 +56,8 @@ enum class function_name {
   Requestvotereply = 2,
   AppendEntries = 3,
   AppendEntriesreply = 4,
-  StatusQuery = 5 
+  StatusQuery = 5 ,
+  Propose =6
 };
 struct Log {
   uint64_t term = 0;   // 该条日志产生时的 leader term
@@ -241,13 +242,23 @@ struct AppendEntriesreply {
 struct Status_query{
 
 };
+struct  Proposee{
+      std::string data;
+      static bool Parse(std::string_view body, Proposee& out) {
+       out.data.assign(body.data(),body.size());
+       return true;
+      }
+      std::string Encode() const {
+        return data;
+      }
+};
 using rcp = std::variant<std::monostate, Requestvote, Requestvotereply,
-                         AppendEntries, AppendEntriesreply,Status_query>;
+                         AppendEntries, AppendEntriesreply,Status_query,Proposee>;
 
 inline rcp pocket(uint8_t function, const std::string& bytes) {
   if (bytes.size() < 5) return std::monostate{};
 
-  const std::string_view body(bytes.data() + 5, bytes.size() - 5);
+  const std::string_view body(bytes.data() + 9, bytes.size() - 9);
   switch (function) {
     case static_cast<uint8_t>(function_name::Requestvote): {
       Requestvote msg;
@@ -271,12 +282,16 @@ inline rcp pocket(uint8_t function, const std::string& bytes) {
     }
     case static_cast<uint8_t>(function_name::StatusQuery):
       return Status_query{};
+    case static_cast<uint8_t>(function_name::Propose): {
+      Proposee msg;
+      if (!Proposee::Parse(body, msg)) return std::monostate{};
+      return msg;
+      }
     default:
       return std::monostate{};
   }
 }
 
-// Output bytes: [opcode u8][body...]
 inline std::string encodpocket(const rcp& m) {
   std::string payload;
   std::visit(
@@ -296,32 +311,41 @@ inline std::string encodpocket(const rcp& m) {
           payload += arg.Encode();
         } else if constexpr (std::is_same_v<T, Status_query>) {
           payload.push_back(static_cast<char>(function_name::StatusQuery));
+        } else if constexpr (std::is_same_v<T, Proposee>) {
+          payload.push_back(static_cast<char>(function_name::Propose));
+          payload += arg.Encode();
         }
       },
       m);
   return payload;
 }
-inline bool raft_encode(uint32_t from, std::string& msg, const rcp& m) {
+inline bool raft_encode(uint32_t to,uint32_t from, std::string& msg, const rcp& m) {
   msg.clear();
   if (std::holds_alternative<std::monostate>(m)) return false;
   const std::string payload = encodpocket(m);
   if (payload.empty()) return false;
-  if (4 + payload.size() > net::messagemaxlen) return false;
-  msg.reserve(4 + payload.size());
+  if (8 + payload.size() > net::messagemaxlen) return false;
+  msg.reserve(8 + payload.size());
+  raft_detail::put_u32(msg, to);
   raft_detail::put_u32(msg, from);
   msg += payload;
   return true;
 }
 
-// Reads: [from u32][opcode u8][body...]
-inline bool raft_code(const std::string& msg, rcp& m, uint8_t& name,
+
+inline bool raft_code(const std::string& msg,uint32_t& to, rcp& m, uint8_t& name,
                       uint32_t& from) {
-  if (msg.size() < 5) return false;
+  if (msg.size() < 9) return false;
   std::size_t pos = 0;
+  if (!raft_detail::get_u32(msg, pos, to)) return false;
   if (!raft_detail::get_u32(msg, pos, from)) return false;
   name = static_cast<uint8_t>(msg[pos]);
   m = pocket(name, msg);
   return !std::holds_alternative<std::monostate>(m);
 }
 
+inline bool raft_code(const std::string& msg, rcp& m, uint8_t& name, uint32_t& from) {
+  uint32_t to = 0;   
+  return raft_code(msg, to, m, name, from);
+}
 #endif
